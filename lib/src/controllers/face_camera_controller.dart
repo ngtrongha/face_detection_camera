@@ -21,11 +21,17 @@ enum FaceCameraState {
   error,
 }
 
+/// Controller to manage the [SmartFaceCamera] state and logic.
+///
+/// Can be used to control the camera programmatically (capture, switch camera, pause/resume)
+/// or to listen to state changes if you build a custom UI.
 class FaceCameraController extends ChangeNotifier {
   CameraController? _cameraController;
   FaceDetector? _faceDetector;
 
   FaceCameraState _state = FaceCameraState.loading;
+
+  /// The current state of the face detection camera.
   FaceCameraState get state => _state;
 
   List<CameraDescription> _cameras = [];
@@ -39,24 +45,41 @@ class FaceCameraController extends ChangeNotifier {
   bool _isPaused = false; // Manual pause for detection/capture
 
   // Configuration
-  final int captureCountdownDuration; // ms
+  /// Duration of the countdown in milliseconds.
+  final int captureCountdownDuration;
 
   int _countdownMilliseconds = 3000;
   int get countdownMilliseconds => _countdownMilliseconds;
 
   // Settings
+  /// Whether to automatically capture when face is stable.
   final bool autoCapture;
+
+  /// Camera resolution preset.
   final ResolutionPreset resolutionPreset;
+
+  /// Whether to enable audio.
   final bool enableAudio;
+
+  /// Initial camera lens direction.
   final CameraLensDirection initialCameraLensDirection;
 
+  /// Format of the output image (JPEG or PNG).
+  final CameraImageFormat imageFormat;
+
+  /// Whether to process the image (rotate/encode) or return raw bytes.
+  final bool enableImageProcessing;
+
   // Output
-  File? _capturedImage;
-  File? get capturedImage => _capturedImage;
+  Uint8List? _capturedImage;
+  Uint8List? get capturedImage => _capturedImage;
 
   // Stream for UI feedback (bounding box)
   final ValueNotifier<Face?> _detectedFace = ValueNotifier<Face?>(null);
   ValueNotifier<Face?> get detectedFace => _detectedFace;
+
+  // Stream for Countdown (High frequency update)
+  final ValueNotifier<int> remainingSeconds = ValueNotifier<int>(0);
 
   FaceCameraController({
     this.autoCapture = true,
@@ -64,10 +87,15 @@ class FaceCameraController extends ChangeNotifier {
     this.enableAudio = true,
     this.captureCountdownDuration = 3000,
     this.initialCameraLensDirection = CameraLensDirection.front,
+    this.imageFormat = CameraImageFormat.jpeg,
+    this.enableImageProcessing = true,
   }) {
     _countdownMilliseconds = captureCountdownDuration;
   }
 
+  /// Initializes the camera and face detector.
+  ///
+  /// Requests camera permission if not already granted.
   Future<void> initialize() async {
     _state = FaceCameraState.loading;
     notifyListeners();
@@ -123,15 +151,18 @@ class FaceCameraController extends ChangeNotifier {
   void _initFaceDetector() {
     final options = FaceDetectorOptions(
       performanceMode: FaceDetectorMode.fast,
-      enableContours: true,
+      enableContours:
+          false, // Optimized: Turned off as we only need bounding box
       enableClassification: false,
+      minFaceSize: 0.15, // Optimized: Ignore small faces (background noise)
     );
     _faceDetector = FaceDetector(options: options);
   }
 
   bool _isProcessing = false;
   DateTime? _lastProcessingTime;
-  final int _processIntervalMs = 50; // Throttle: process every 50ms
+  final int _processIntervalMs =
+      100; // Optimized: Process 10 FPS instead of 20 FPS
 
   Future<void> _processCameraImage(CameraImage image) async {
     if (_isProcessing || _cameraController == null || _faceDetector == null) {
@@ -242,6 +273,7 @@ class FaceCameraController extends ChangeNotifier {
 
     _state = FaceCameraState.stable;
     _countdownMilliseconds = captureCountdownDuration; // Reset
+    remainingSeconds.value = (_countdownMilliseconds / 1000).ceil();
     notifyListeners();
 
     _countdownTimer?.cancel();
@@ -249,11 +281,17 @@ class FaceCameraController extends ChangeNotifier {
       timer,
     ) {
       _countdownMilliseconds -= 100;
+
+      // Update ValueNotifier instead of notifyListeners
+      // This avoids rebuilding the whole UI 10 times a second
+      final newSeconds = (_countdownMilliseconds / 1000).ceil();
+      if (remainingSeconds.value != newSeconds) {
+        remainingSeconds.value = newSeconds;
+      }
+
       if (_countdownMilliseconds <= 0) {
         timer.cancel();
         capture();
-      } else {
-        notifyListeners();
       }
     });
   }
@@ -267,6 +305,8 @@ class FaceCameraController extends ChangeNotifier {
     }
   }
 
+  /// Pauses the face detection and camera stream processing.
+  /// Useful when navigating away or opening a dialog.
   void pause() {
     _isPaused = true;
     _stopCountdown();
@@ -275,11 +315,15 @@ class FaceCameraController extends ChangeNotifier {
     // However, for UI clarity, maybe we should stay in current state.
   }
 
+  /// Resumes the face detection processing.
   void resume() {
     _isPaused = false;
     // No specific state reset needed, next frame will process.
   }
 
+  /// Manually triggers the capture process.
+  ///
+  /// This will stop any active countdown and immediately take a picture.
   Future<void> capture() async {
     if (_state == FaceCameraState.capturing) return;
 
@@ -290,7 +334,16 @@ class FaceCameraController extends ChangeNotifier {
     try {
       final XFile file = await _cameraController!.takePicture();
 
-      final File processed = await processCapturedImage(File(file.path));
+      final Uint8List processed = await processCapturedImage(
+        File(file.path),
+        format: imageFormat,
+        enableProcessing: enableImageProcessing,
+      );
+
+      // Clean up the temporary file created by camera plugin
+      if (File(file.path).existsSync()) {
+        File(file.path).deleteSync();
+      }
 
       _capturedImage = processed;
       _state = FaceCameraState.captured;
@@ -302,6 +355,8 @@ class FaceCameraController extends ChangeNotifier {
     }
   }
 
+  /// Resets the controller to the initial [FaceCameraState.searching] state.
+  /// Clears the captured image and restarts detection.
   void reset() {
     _capturedImage = null;
     _resetStability();
@@ -312,11 +367,13 @@ class FaceCameraController extends ChangeNotifier {
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    remainingSeconds.dispose();
     _cameraController?.dispose();
     _faceDetector?.close();
     super.dispose();
   }
 
+  /// Switches between available cameras (Front/Back).
   Future<void> switchCamera() async {
     if (_cameras.isEmpty) return;
 

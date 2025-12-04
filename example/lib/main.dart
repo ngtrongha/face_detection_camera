@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:face_detection_camera/face_detection_camera.dart';
 import 'package:flutter/material.dart';
@@ -24,7 +25,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  File? _capturedImage;
+  Uint8List? _capturedImage;
   late FaceCameraController _controller;
 
   @override
@@ -51,7 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (_capturedImage != null) ...[
-              Image.file(_capturedImage!, height: 300),
+              Image.memory(_capturedImage!, height: 300),
               const SizedBox(height: 20),
               const Text('Last Captured Face!'),
             ] else
@@ -64,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     builder: (context) => SmartFaceCamera(
                       controller: _controller,
                       autoCapture: true,
-                      onCapture: (File image) async {
+                      onCapture: (Uint8List image) async {
                         // Pause immediately to process
                         _controller.pause();
 
@@ -85,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   'Sending image to server...\nCamera is paused (by user) but detecting.',
                                 ),
                                 const SizedBox(height: 10),
-                                Image.file(image, height: 150),
+                                Image.memory(image, height: 150),
                                 const SizedBox(height: 10),
                                 const LinearProgressIndicator(),
                               ],

@@ -1,10 +1,12 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'controllers/face_camera_controller.dart';
 import 'widgets/face_overlay.dart';
+
+import 'utils/image_processing.dart'; // Import for CameraImageFormat
 
 class FaceCameraMessageStrings {
   final String? searching;
@@ -24,18 +26,79 @@ class FaceCameraMessageStrings {
   });
 }
 
+/// A widget that integrates a camera with ML Kit face detection to capture
+/// profile pictures automatically.
+///
+/// Features:
+/// - Auto-detects face and starts a countdown.
+/// - Shows a visual overlay (face frame) that animates.
+/// - Captures image when the face is stable.
+/// - Returns the captured image as [Uint8List] for easy usage.
+///
+/// Usage:
+/// ```dart
+/// SmartFaceCamera(
+///   onCapture: (image) {
+///     // Handle the captured image (Uint8List)
+///   },
+///   messageStrings: FaceCameraMessageStrings(
+///     stable: 'Hold still for a moment...',
+///   ),
+/// )
+/// ```
 class SmartFaceCamera extends StatefulWidget {
-  final Function(File image) onCapture;
+  /// Callback fired when an image is captured successfully.
+  ///
+  /// The returned [Uint8List] contains the bytes of the captured image
+  /// (encoded as JPEG or PNG based on [imageFormat]).
+  final Function(Uint8List image) onCapture;
+
+  /// Optional builder to customize the status message widget.
   final Widget? Function(BuildContext context, FaceCameraState state)?
-  messageBuilder; // Optional builder for status messages
+  messageBuilder;
+
+  /// Whether to automatically capture the image when a face is detected and stable.
+  /// Defaults to true.
   final bool autoCapture;
-  final int captureCountdownDuration; // Add this
+
+  /// Duration of the countdown before capturing (in milliseconds).
+  /// Defaults to 3000ms (3 seconds).
+  final int captureCountdownDuration;
+
+  /// Whether to show camera controls (switch camera button).
+  /// Defaults to false.
   final bool showControls;
+
+  /// Whether to enable audio for the camera.
+  /// Defaults to true.
   final bool enableAudio;
+
+  /// The resolution preset for the camera.
+  /// Defaults to [ResolutionPreset.high].
   final ResolutionPreset resolutionPreset;
+
+  /// The initial direction of the camera lens.
+  /// Defaults to [CameraLensDirection.front].
   final CameraLensDirection initialCameraLensDirection;
+
+  /// Custom strings for status messages.
   final FaceCameraMessageStrings? messageStrings;
+
+  /// Optional controller to manage camera state externally.
   final FaceCameraController? controller;
+
+  /// The format of the captured image.
+  /// Use [CameraImageFormat.jpeg] for smaller size (default).
+  /// Use [CameraImageFormat.png] for lossless quality but larger size.
+  final CameraImageFormat imageFormat;
+
+  /// Whether to enable image processing (rotation, format conversion).
+  /// Defaults to true.
+  ///
+  /// Set to false to disable processing and return raw image bytes from the camera.
+  /// This significantly improves capture speed but might result in incorrect
+  /// image orientation on some devices.
+  final bool enableImageProcessing;
 
   const SmartFaceCamera({
     super.key,
@@ -49,6 +112,8 @@ class SmartFaceCamera extends StatefulWidget {
     this.initialCameraLensDirection = CameraLensDirection.front,
     this.messageStrings,
     this.controller,
+    this.imageFormat = CameraImageFormat.jpeg,
+    this.enableImageProcessing = true,
   });
 
   @override
@@ -58,7 +123,7 @@ class SmartFaceCamera extends StatefulWidget {
 class _SmartFaceCameraState extends State<SmartFaceCamera>
     with WidgetsBindingObserver {
   late FaceCameraController _controller;
-  File? _lastCapturedImage;
+  Uint8List? _lastCapturedImage;
 
   @override
   void initState() {
@@ -73,6 +138,8 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
         resolutionPreset: widget.resolutionPreset,
         enableAudio: widget.enableAudio,
         initialCameraLensDirection: widget.initialCameraLensDirection,
+        imageFormat: widget.imageFormat,
+        enableImageProcessing: widget.enableImageProcessing,
       );
     }
     _initializeController();
@@ -235,9 +302,27 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
         color = Colors.yellow;
         break;
       case FaceCameraState.stable:
-        msg = widget.messageStrings?.stable ?? 'Hold still...';
-        color = Colors.greenAccent;
-        break;
+        return ValueListenableBuilder<int>(
+          valueListenable: _controller.remainingSeconds,
+          builder: (context, seconds, child) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                // Show message with countdown
+                '${widget.messageStrings?.stable ?? 'Hold still...'} ($seconds)',
+                style: const TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            );
+          },
+        );
       default:
         return const SizedBox.shrink();
     }

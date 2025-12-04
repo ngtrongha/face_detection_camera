@@ -2,23 +2,45 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
-/// Processes the captured image in a background isolate.
-///
-/// This function will:
-/// 1. Decode the image file.
-/// 2. Fix orientation if needed (though Camera plugin usually handles Exif).
-/// 3. (Optional) Crop or resize if specified.
-///
-/// Returns the path to the processed file.
-Future<File> processCapturedImage(File file) async {
-  // Use compute to run image processing in a separate isolate
-  final processedPath = await compute(_processImageIsolate, file.path);
-  return File(processedPath);
+enum CameraImageFormat { jpeg, png }
+
+class ImageProcessingRequest {
+  final String filePath;
+  final CameraImageFormat format;
+
+  ImageProcessingRequest(this.filePath, this.format);
 }
 
-String _processImageIsolate(String filePath) {
-  final file = File(filePath);
+/// Returns the processed image as Uint8List.
+Future<Uint8List> processCapturedImage(
+  File file, {
+  CameraImageFormat format = CameraImageFormat.jpeg,
+  bool enableProcessing = true,
+}) async {
+  if (!enableProcessing) {
+    // Optimization: Skip isolate and decoding entirely.
+    // Returns raw bytes from camera. Fast but might have wrong orientation.
+    final bytes = file.readAsBytesSync();
+    file.deleteSync();
+    return bytes;
+  }
+
+  // Use compute to run image processing in a separate isolate
+  final request = ImageProcessingRequest(file.path, format);
+  final processedBytes = await compute(_processImageIsolate, request);
+  return processedBytes;
+}
+
+Uint8List _processImageIsolate(ImageProcessingRequest request) {
+  final file = File(request.filePath);
   final bytes = file.readAsBytesSync();
+
+  // Clean up original file immediately
+  file.deleteSync();
+
+  // If default JPEG and no rotation needed, we could return bytes directly.
+  // But to ensure consistency (and handle orientation), we decode & encode.
+  // Optimization: If you TRUST the camera plugin's orientation, you can skip this.
 
   // Decode the image
   final image = img.decodeImage(bytes);
@@ -27,21 +49,10 @@ String _processImageIsolate(String filePath) {
     throw Exception('Unable to decode image');
   }
 
-  // If we need to do any specific processing like resizing or baking orientation:
-  // Note: img.decodeImage usually handles Exif orientation baking automatically
-  // if we use decodeImage(bytes), but sometimes we might want to be explicit.
-
-  // Example: Resize if too large (optional, based on requirements)
-  // For now, we just re-encode to JPEG to ensure standard format and strip extra metadata if needed,
-  // or simply return the original if no processing is actually needed.
-  // But to demonstrate Isolate usage:
-
-  // Let's say we just want to ensure it's a valid jpeg and maybe compress it slightly for performance
-  final jpg = img.encodeJpg(image, quality: 90);
-
-  // Overwrite or write to new file
-  // For this example, we overwrite
-  file.writeAsBytesSync(jpg);
-
-  return filePath;
+  // Encode based on requested format
+  if (request.format == CameraImageFormat.png) {
+    return img.encodePng(image);
+  } else {
+    return img.encodeJpg(image, quality: 90);
+  }
 }
