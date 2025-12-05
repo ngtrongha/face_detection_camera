@@ -9,3 +9,7 @@
 * Output bytes as `Uint8List`, added `statusBuilder` for rich status customization.
 * Added camera switch control, resolution preset config, and front-camera flip fix for captured image.
 * Performance: throttled face processing, cached paints in overlay, optional image processing toggle.
+
+## 0.1.1
+
+* Polish for publish: cleaned pubspec metadata and docs, added .pubignore, bumped version.
