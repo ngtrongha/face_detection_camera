@@ -71,8 +71,8 @@ class FacePainter extends CustomPainter {
       currentRadiusEnd,
       [
         Colors.transparent,
-        Colors.black.withOpacity(0.35),
-        Colors.black.withOpacity(0.92),
+        Colors.black.withValues(alpha: 0.35),
+        Colors.black.withValues(alpha: 0.92),
       ],
       [0.0, (radiusStart / currentRadiusEnd).clamp(0.0, 1.0), 1.0],
     );

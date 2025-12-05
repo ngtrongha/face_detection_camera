@@ -1,15 +1,16 @@
 # Face Detection Camera
 
-A smart Flutter camera package that detects faces, ensures stability, and automatically captures images. It uses Google's ML Kit for face detection and provides a customizable overlay and controller for advanced workflows (like server-side verification loops).
+A smart Flutter camera package that detects faces, enforces “look straight” constraints, and automatically captures images. Uses Google ML Kit for face detection, supports custom overlay, rich status builder, and a controller for advanced workflows (like server verification loops).
 
 ## Features
 
-- 📸 **Face Detection**: Real-time face detection using ML Kit.
-- 🤳 **Auto Capture**: Automatically captures an image when the face is stable for a set duration.
-- ⏳ **Stability Countdown**: Visual countdown feedback when the user holds still.
-- 🎛 **Controller API**: Full control over the camera flow (pause, resume, capture, reset) via `FaceCameraController`.
-- 🎨 **Customization**: Customize messages, overlays, and detection parameters.
-- 🔄 **Continuous Workflow**: Designed for scenarios where you need to capture -> process (e.g., send to server) -> resume capture without closing the camera.
+- 📸 **Face Detection**: Real-time using ML Kit.
+- 🤳 **Auto Capture**: Captures when the face is stable for a configurable duration.
+- 🧭 **Look-straight constraints**: Enforce yaw/roll/pitch thresholds; show warning when user not facing forward.
+- 🌘 **Encroaching vignette**: Dramatic darkening from edges toward the face; adjustable gap via `vignettePaddingFactor`.
+- 🎛 **Controller API**: Pause, resume, capture, switch camera, reset; tweak yaw/roll/pitch thresholds.
+- 🎨 **Customization**: `statusBuilder` (rich), `messageBuilder` (legacy), overlay coloring, vignette gap.
+- 🔄 **Continuous Workflow**: Capture -> process -> resume without closing the camera.
 
 ## Installation
 
@@ -47,31 +48,31 @@ Add the following keys to your `Info.plist`:
 
 ## Usage
 
-### Basic Usage
-
-Simply wrap the `SmartFaceCamera` widget and handle the `onCapture` callback.
+### Basic Usage (quick start)
 
 ```dart
 import 'package:face_detection_camera/face_detection_camera.dart';
 
 SmartFaceCamera(
   autoCapture: true,
-  captureCountdownDuration: 3000, // 3 seconds stable before capture
-  onCapture: (File image) {
-    print('Captured image path: ${image.path}');
+  captureCountdownDuration: 3000, // ms stable before capture
+  vignettePaddingFactor: 1.1,     // gap from face to vignette
+  onCapture: (Uint8List imageBytes) {
+    // handle captured bytes (JPEG by default)
   },
-  messageBuilder: (context, state) {
-    if (state == FaceCameraState.searching) {
-      return Text('Please look at the camera');
+  statusBuilder: (context, state, facingForward, remainingSeconds) {
+    if (!facingForward) return Text('Please look straight at the camera');
+    if (state == FaceCameraState.stable) {
+      return Text('Hold still... ($remainingSeconds)');
     }
-    return null; // Use default messages
+    return null; // fallback to defaults
   },
 )
 ```
 
 ### Advanced Usage: Server Processing Loop
 
-For use cases where you need to capture an image, pause the camera to send it to a server, and then resume looking for a face based on the result:
+For use cases where you need to capture an image, pause camera logic, send to server, then resume:
 
 1. Create a `FaceCameraController`.
 2. Pass it to `SmartFaceCamera`.
@@ -92,6 +93,10 @@ class _MyCameraScreenState extends State<MyCameraScreen> {
     _controller = FaceCameraController(
       autoCapture: true,
       captureCountdownDuration: 2000,
+      // tighten facing constraints if needed
+      maxYawDegrees: 10,
+      maxRollDegrees: 10,
+      maxPitchDegrees: 10,
     );
   }
 
@@ -106,7 +111,7 @@ class _MyCameraScreenState extends State<MyCameraScreen> {
     return Scaffold(
       body: SmartFaceCamera(
         controller: _controller,
-        onCapture: (File image) async {
+        onCapture: (Uint8List imageBytes) async {
           // 1. Pause detection immediately so we don't capture again while processing
           _controller.pause();
 
@@ -137,22 +142,44 @@ class _MyCameraScreenState extends State<MyCameraScreen> {
 ### SmartFaceCamera
 
 | Parameter | Type | Description | Default |
-|Or|---|---|---|
-| `onCapture` | `Function(File)` | Callback when an image is captured. | Required |
-| `controller` | `FaceCameraController?` | Controller to manage state programmatically. | `null` |
-| `autoCapture` | `bool` | Whether to automatically capture when stable. | `true` |
-| `captureCountdownDuration` | `int` | Duration in ms face must be stable. | `3000` |
+| --- | --- | --- | --- |
+| `onCapture` | `Function(Uint8List)` | Captured image bytes (JPEG/PNG). | Required |
+| `controller` | `FaceCameraController?` | External controller (pause/resume/capture/switch). | `null` |
+| `autoCapture` | `bool` | Auto capture when stable. | `true` |
+| `captureCountdownDuration` | `int` | Stable duration before capture (ms). | `3000` |
+| `vignettePaddingFactor` | `double` | Gap from face to dark vignette (bigger = wider clear area). | `1.1` |
 | `showControls` | `bool` | Show switch camera button. | `false` |
-| `messageBuilder` | `Widget Function?` | Custom builder for status messages. | `null` |
+| `messageBuilder` | `Widget? Function(BuildContext, FaceCameraState)` | Legacy message builder. | `null` |
+| `statusBuilder` | `Widget? Function(BuildContext, FaceCameraState, bool facingForward, int remainingSeconds)` | Rich builder with facing + countdown info. | `null` |
 | `resolutionPreset` | `ResolutionPreset` | Camera resolution. | `ResolutionPreset.high` |
+| `initialCameraLensDirection` | `CameraLensDirection` | Start camera (front/back). | `front` |
+| `imageFormat` | `CameraImageFormat` | `jpeg` / `png` output. | `jpeg` |
+| `enableImageProcessing` | `bool` | Rotate/encode vs raw bytes. | `true` |
 
 ### FaceCameraController
 
 | Method | Description |
-|---|---|
-| `initialize()` | Initializes camera and face detector. |
-| `pause()` | Pauses stability check and countdown (camera feed continues). |
-| `resume()` | Resumes stability check and auto-capture logic. |
-| `capture()` | Manually trigger a capture. |
-| `switchCamera()` | Switch between front and back cameras. |
-| `dispose()` | Clean up resources. |
+| --- | --- |
+| `initialize()` | Init camera and detector. |
+| `pause()` / `resume()` | Pause/resume stability + countdown (preview still runs). |
+| `capture()` | Manual capture (resets countdown). |
+| `switchCamera()` | Toggle front/back. |
+| `dispose()` | Clean resources. |
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `maxYawDegrees` | `double` | Allowed yaw (turn left/right) to be “facing forward”. |
+| `maxRollDegrees` | `double` | Allowed roll (tilt head). |
+| `maxPitchDegrees` | `double` | Allowed pitch (look up/down). |
+| `facingForward` | `ValueNotifier<bool>` | True when within yaw/roll/pitch limits. |
+| `remainingSeconds` | `ValueNotifier<int>` | Countdown seconds (stable phase). |
+| `detectedFace` | `ValueNotifier<Face?>` | Latest detected face (for custom overlays). |
+
+## Publishing Checklist
+
+- [ ] Update version in `pubspec.yaml`.
+- [ ] Run `flutter pub get`.
+- [ ] Run static checks: `flutter analyze`.
+- [ ] Run tests: `flutter test`.
+- [ ] Update changelog (if any) with recent changes (Uint8List output, vignette padding, facing constraints, statusBuilder).
+- [ ] Verify Android/iOS permissions in example app (`CAMERA`, `RECORD_AUDIO`, Info.plist strings).
