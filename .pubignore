@@ -1,0 +1,17 @@
+.dart_tool/
+.flutter-plugins-dependencies
+.idea/
+.vscode/
+.DS_Store
+build/
+
+example/.dart_tool/
+example/.flutter-plugins-dependencies
+example/.idea/
+example/.vscode/
+example/.DS_Store
+example/build/
+
+# Generated artifacts we never want to ship
+*.iml
+
