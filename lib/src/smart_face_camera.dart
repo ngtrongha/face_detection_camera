@@ -8,6 +8,14 @@ import 'widgets/face_overlay.dart';
 
 import 'utils/image_processing.dart'; // Import for CameraImageFormat
 
+typedef StatusMessageBuilder =
+    Widget? Function(
+      BuildContext context,
+      FaceCameraState state,
+      bool isFacingForward,
+      int remainingSeconds,
+    );
+
 class FaceCameraMessageStrings {
   final String? searching;
   final String? detected;
@@ -57,6 +65,11 @@ class SmartFaceCamera extends StatefulWidget {
   final Widget? Function(BuildContext context, FaceCameraState state)?
   messageBuilder;
 
+  /// Rich customization builder for status message, with extra context:
+  /// - [isFacingForward]: whether the user is looking straight
+  /// - [remainingSeconds]: countdown seconds (0 if not counting)
+  final StatusMessageBuilder? statusBuilder;
+
   /// Whether to automatically capture the image when a face is detected and stable.
   /// Defaults to true.
   final bool autoCapture;
@@ -100,6 +113,10 @@ class SmartFaceCamera extends StatefulWidget {
   /// image orientation on some devices.
   final bool enableImageProcessing;
 
+  /// Controls the gap between the face and the dark vignette (encroaching effect).
+  /// Higher value = bigger clear area around the face. Default: 1.1
+  final double vignettePaddingFactor;
+
   const SmartFaceCamera({
     super.key,
     required this.onCapture,
@@ -114,6 +131,8 @@ class SmartFaceCamera extends StatefulWidget {
     this.controller,
     this.imageFormat = CameraImageFormat.jpeg,
     this.enableImageProcessing = true,
+    this.vignettePaddingFactor = 1.1,
+    this.statusBuilder,
   });
 
   @override
@@ -140,6 +159,9 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
         initialCameraLensDirection: widget.initialCameraLensDirection,
         imageFormat: widget.imageFormat,
         enableImageProcessing: widget.enableImageProcessing,
+        maxYawDegrees: widget.controller?.maxYawDegrees ?? 12.0,
+        maxRollDegrees: widget.controller?.maxRollDegrees ?? 12.0,
+        maxPitchDegrees: widget.controller?.maxPitchDegrees ?? 12.0,
       );
     }
     _initializeController();
@@ -243,16 +265,22 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
                     imageSize: _controller.cameraController!.value.previewSize!,
                     state: _controller.state,
                     duration: widget.captureCountdownDuration,
+                    vignettePaddingFactor: widget.vignettePaddingFactor,
                   );
                 },
               ),
 
-              // Status Message
-              Positioned(
-                top: 100,
-                left: 20,
-                right: 20,
-                child: Center(child: _buildStatusMessage()),
+              // Status Message (listen to facingForward as well)
+              ValueListenableBuilder<bool>(
+                valueListenable: _controller.facingForward,
+                builder: (context, isFacingForward, _) {
+                  return Positioned(
+                    top: 100,
+                    left: 20,
+                    right: 20,
+                    child: Center(child: _buildStatusMessage(isFacingForward)),
+                  );
+                },
               ),
 
               // Controls
@@ -284,7 +312,21 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
     );
   }
 
-  Widget _buildStatusMessage() {
+  Widget _buildStatusMessage(bool isFacingForward) {
+    final int seconds = _controller.remainingSeconds.value;
+
+    // New rich builder takes priority
+    if (widget.statusBuilder != null) {
+      final custom = widget.statusBuilder!(
+        context,
+        _controller.state,
+        isFacingForward,
+        seconds,
+      );
+      if (custom != null) return custom;
+    }
+
+    // Legacy builder fallback (without facing info)
     if (widget.messageBuilder != null) {
       final customMessage = widget.messageBuilder!(context, _controller.state);
       if (customMessage != null) return customMessage;
@@ -292,6 +334,15 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
 
     String msg = '';
     Color color = Colors.white;
+
+    // Warning if not facing forward
+    if (!isFacingForward) {
+      msg =
+          widget.messageStrings?.capturing ??
+          'Please look straight at the camera';
+      color = Colors.redAccent;
+      return _statusChip(msg, color);
+    }
 
     switch (_controller.state) {
       case FaceCameraState.searching:
@@ -302,31 +353,18 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
         color = Colors.yellow;
         break;
       case FaceCameraState.stable:
-        return ValueListenableBuilder<int>(
-          valueListenable: _controller.remainingSeconds,
-          builder: (context, seconds, child) {
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                // Show message with countdown
-                '${widget.messageStrings?.stable ?? 'Hold still...'} ($seconds)',
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            );
-          },
+        return _statusChip(
+          '${widget.messageStrings?.stable ?? 'Hold still...'} ($seconds)',
+          Colors.greenAccent,
         );
       default:
         return const SizedBox.shrink();
     }
 
+    return _statusChip(msg, color);
+  }
+
+  Widget _statusChip(String msg, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(

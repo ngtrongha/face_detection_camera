@@ -1,10 +1,10 @@
-import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:face_detection_camera/face_detection_camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const MyApp());
 }
 
@@ -65,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     builder: (context) => SmartFaceCamera(
                       controller: _controller,
                       autoCapture: true,
+                      vignettePaddingFactor: 0.8,
                       onCapture: (Uint8List image) async {
                         // Pause immediately to process
                         _controller.pause();

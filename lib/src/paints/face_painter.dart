@@ -8,22 +8,19 @@ class FacePainter extends CustomPainter {
   final Size imageSize;
   final Color color;
   final double effectProgress; // 0.0 to 1.0
+  final double facePaddingFactor; // controls distance from face to dark region
 
-  // Cached paints to avoid recreation
+  // Cached paint to avoid recreation
   late final Paint _paintVignette;
-  late final Paint _paintBorder;
 
   FacePainter({
     required this.face,
     required this.imageSize,
     this.color = Colors.white,
     this.effectProgress = 1.0,
+    this.facePaddingFactor = 1.1, // user-adjustable gap
   }) {
     _paintVignette = Paint()..style = PaintingStyle.fill;
-    _paintBorder = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0
-      ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 3);
   }
 
   @override
@@ -50,18 +47,23 @@ class FacePainter extends CustomPainter {
     );
     final center = faceRect.center;
 
-    // Optimized radius calculation
-    final double maxScreenRadius =
-        size.shortestSide * 1.5; // Approximate enough for max coverage
-    final double targetRadius = max(size.width, size.height) * 0.8;
+    // Encroaching radius calculation (more dramatic):
+    // Start: very large radius so preview gần như không bị tối.
+    // End: bán kính nhỏ quanh khuôn mặt để tối rõ rệt vùng biên.
+    final double startRadius =
+        max(size.width, size.height) * 1.6; // bắt đầu rất lớn (tối ở viền)
+    final double endRadius =
+        max(faceRect.width, faceRect.height) *
+        facePaddingFactor; // kết thúc sát mặt tuỳ chỉnh
 
     final double currentRadiusEnd = ui.lerpDouble(
-      maxScreenRadius,
-      targetRadius,
+      startRadius,
+      endRadius,
       effectProgress,
     )!;
 
-    final double radiusStart = max(faceRect.width, faceRect.height) * 0.6;
+    final double radiusStart =
+        (faceRect.shortestSide) * 0.6; // trong suốt quanh mặt
 
     // Update shader
     _paintVignette.shader = ui.Gradient.radial(
@@ -69,8 +71,8 @@ class FacePainter extends CustomPainter {
       currentRadiusEnd,
       [
         Colors.transparent,
-        Colors.black.withValues(alpha: 0.2),
-        Colors.black.withValues(alpha: 0.8),
+        Colors.black.withOpacity(0.35),
+        Colors.black.withOpacity(0.92),
       ],
       [0.0, (radiusStart / currentRadiusEnd).clamp(0.0, 1.0), 1.0],
     );
@@ -79,14 +81,6 @@ class FacePainter extends CustomPainter {
       Rect.fromLTWH(0, 0, size.width, size.height),
       _paintVignette,
     );
-
-    // Draw border
-    if (effectProgress > 0.5) {
-      _paintBorder.color = color.withValues(
-        alpha: (effectProgress - 0.5) * 2.0,
-      );
-      canvas.drawOval(faceRect.inflate(20), _paintBorder);
-    }
   }
 
   @override

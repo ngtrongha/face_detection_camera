@@ -70,6 +70,15 @@ class FaceCameraController extends ChangeNotifier {
   /// Whether to process the image (rotate/encode) or return raw bytes.
   final bool enableImageProcessing;
 
+  /// Maximum allowed yaw (turn left/right) in degrees to consider facing forward.
+  final double maxYawDegrees;
+
+  /// Maximum allowed roll (tilt head) in degrees to consider facing forward.
+  final double maxRollDegrees;
+
+  /// Maximum allowed pitch (look up/down) in degrees to consider facing forward.
+  final double maxPitchDegrees;
+
   // Output
   Uint8List? _capturedImage;
   Uint8List? get capturedImage => _capturedImage;
@@ -80,6 +89,8 @@ class FaceCameraController extends ChangeNotifier {
 
   // Stream for Countdown (High frequency update)
   final ValueNotifier<int> remainingSeconds = ValueNotifier<int>(0);
+  // Facing forward status
+  final ValueNotifier<bool> facingForward = ValueNotifier<bool>(true);
 
   FaceCameraController({
     this.autoCapture = true,
@@ -89,6 +100,9 @@ class FaceCameraController extends ChangeNotifier {
     this.initialCameraLensDirection = CameraLensDirection.front,
     this.imageFormat = CameraImageFormat.jpeg,
     this.enableImageProcessing = true,
+    this.maxYawDegrees = 12.0,
+    this.maxRollDegrees = 12.0,
+    this.maxPitchDegrees = 12.0,
   }) {
     _countdownMilliseconds = captureCountdownDuration;
   }
@@ -138,9 +152,9 @@ class FaceCameraController extends ChangeNotifier {
       camera,
       resolutionPreset,
       enableAudio: enableAudio,
+      // Use YUV420 for Android (CameraX 0.11.x streams YUV_420_888)
       imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup
-                .nv21 // Better for ML Kit on Android
+          ? ImageFormatGroup.yuv420
           : ImageFormatGroup.bgra8888, // iOS
     );
 
@@ -223,6 +237,31 @@ class FaceCameraController extends ChangeNotifier {
   }
 
   void _checkStability(Face face) {
+    // Require facing forward: limit yaw (Y), roll (Z), pitch (X)
+    // If ML Kit không trả về góc, coi như không đạt (dùng giá trị lớn để fail)
+    final double yaw = face.headEulerAngleY ?? 999.0; // turn left/right
+    final double roll = face.headEulerAngleZ ?? 999.0; // tilt
+    final double pitch = face.headEulerAngleX ?? 999.0; // look up/down
+    final bool isFacingForward =
+        yaw.abs() <= maxYawDegrees &&
+        roll.abs() <= maxRollDegrees &&
+        pitch.abs() <= maxPitchDegrees;
+    facingForward.value = isFacingForward;
+
+    if (!isFacingForward) {
+      // Not facing straight -> treat as moving
+      _recentFaceRects.clear();
+      _detectedFace.value = face;
+      if (_state == FaceCameraState.stable) {
+        _stopCountdown();
+      }
+      if (_state != FaceCameraState.detected) {
+        _state = FaceCameraState.detected;
+        notifyListeners();
+      }
+      return;
+    }
+
     _recentFaceRects.add(face.boundingBox);
     if (_recentFaceRects.length > _stabilityWindowSize) {
       _recentFaceRects.removeAt(0);
@@ -266,6 +305,7 @@ class FaceCameraController extends ChangeNotifier {
   void _resetStability() {
     _recentFaceRects.clear();
     _stopCountdown();
+    facingForward.value = true;
   }
 
   void _startCountdown() {
@@ -334,10 +374,14 @@ class FaceCameraController extends ChangeNotifier {
     try {
       final XFile file = await _cameraController!.takePicture();
 
+      final bool flipFront =
+          _currentCamera?.lensDirection == CameraLensDirection.front;
+
       final Uint8List processed = await processCapturedImage(
         File(file.path),
         format: imageFormat,
         enableProcessing: enableImageProcessing,
+        flipHorizontal: flipFront,
       );
 
       // Clean up the temporary file created by camera plugin
@@ -368,6 +412,7 @@ class FaceCameraController extends ChangeNotifier {
   void dispose() {
     _countdownTimer?.cancel();
     remainingSeconds.dispose();
+    facingForward.dispose();
     _cameraController?.dispose();
     _faceDetector?.close();
     super.dispose();

@@ -9,6 +9,7 @@ class FaceOverlay extends StatelessWidget {
   final Size imageSize;
   final FaceCameraState state;
   final int duration;
+  final double vignettePaddingFactor;
 
   const FaceOverlay({
     super.key,
@@ -16,6 +17,7 @@ class FaceOverlay extends StatelessWidget {
     required this.imageSize,
     required this.state,
     this.duration = 3000,
+    this.vignettePaddingFactor = 1.1,
   });
 
   @override
@@ -36,31 +38,23 @@ class FaceOverlay extends StatelessWidget {
         color = Colors.white;
     }
 
-    // Animate the "encroachment" effect
-    // We want it to sync with the countdown duration when stable
-    // When searching/detected, maybe a quick intro (e.g. 800ms)
-    // But user wants "thời gian chụp sẽ đồng bộ với hiệu ứng"
-    // So if stable, we should tween from current progress to 1.0 over the remaining time?
-    // Or simplified: The effect progress maps to the countdown progress?
-
-    // Let's try mapping state to target progress:
-    // searching: 0.0
-    // detected: 0.2 (just a bit of vignette to show we found face)
-    // stable: 1.0 (full focus) over 'duration'
-
+    // Encroaching effect mapping:
+    // - searching: 0.0 (clear)
+    // - detected: 0.6 (viền đã tối khá rõ)
+    // - stable/capturing: 1.0 (tối sát khuôn mặt) trong thời gian countdown
     double targetProgress = 0.0;
-    int animDuration = 300;
+    int animDuration = 400;
 
     if (state == FaceCameraState.searching) {
       targetProgress = 0.0;
-      animDuration = 500;
+      animDuration = 400;
     } else if (state == FaceCameraState.detected) {
-      targetProgress = 0.3; // Partial vignette
-      animDuration = 500;
+      targetProgress = 0.6;
+      animDuration = 700;
     } else if (state == FaceCameraState.stable ||
         state == FaceCameraState.capturing) {
       targetProgress = 1.0;
-      animDuration = duration; // Sync with countdown duration!
+      animDuration = duration; // đồng bộ với thời gian chụp
     }
 
     return TweenAnimationBuilder<double>(
@@ -84,6 +78,7 @@ class FaceOverlay extends StatelessWidget {
                 imageSize: imageSize,
                 color: animatedColor ?? Colors.white,
                 effectProgress: progress,
+                facePaddingFactor: vignettePaddingFactor,
               ),
               size: Size.infinite,
             );

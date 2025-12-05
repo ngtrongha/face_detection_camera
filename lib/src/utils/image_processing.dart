@@ -7,8 +7,13 @@ enum CameraImageFormat { jpeg, png }
 class ImageProcessingRequest {
   final String filePath;
   final CameraImageFormat format;
+  final bool flipHorizontal;
 
-  ImageProcessingRequest(this.filePath, this.format);
+  ImageProcessingRequest(
+    this.filePath,
+    this.format, {
+    this.flipHorizontal = false,
+  });
 }
 
 /// Returns the processed image as Uint8List.
@@ -16,6 +21,7 @@ Future<Uint8List> processCapturedImage(
   File file, {
   CameraImageFormat format = CameraImageFormat.jpeg,
   bool enableProcessing = true,
+  bool flipHorizontal = false,
 }) async {
   if (!enableProcessing) {
     // Optimization: Skip isolate and decoding entirely.
@@ -26,7 +32,11 @@ Future<Uint8List> processCapturedImage(
   }
 
   // Use compute to run image processing in a separate isolate
-  final request = ImageProcessingRequest(file.path, format);
+  final request = ImageProcessingRequest(
+    file.path,
+    format,
+    flipHorizontal: flipHorizontal,
+  );
   final processedBytes = await compute(_processImageIsolate, request);
   return processedBytes;
 }
@@ -49,10 +59,15 @@ Uint8List _processImageIsolate(ImageProcessingRequest request) {
     throw Exception('Unable to decode image');
   }
 
+  // Flip for front camera if requested
+  img.Image finalImage = request.flipHorizontal
+      ? img.flipHorizontal(image)
+      : image;
+
   // Encode based on requested format
   if (request.format == CameraImageFormat.png) {
-    return img.encodePng(image);
+    return img.encodePng(finalImage);
   } else {
-    return img.encodeJpg(image, quality: 90);
+    return img.encodeJpg(finalImage, quality: 90);
   }
 }
