@@ -1,7 +1,8 @@
 name: face_detection_camera
 description: "Smart Flutter camera with face detection, look-straight constraints, auto-capture, and customizable overlay."
 version: 0.1.0
-homepage:
+homepage: https://github.com/ngtrongha/face_detection_camera
+repository: https://github.com/ngtrongha/face_detection_camera
 
 environment:
   sdk: ^3.10.1
