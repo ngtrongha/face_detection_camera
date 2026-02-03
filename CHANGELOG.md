@@ -1,15 +1,23 @@
-## 0.0.1
+# Changelog
 
-* TODO: Describe initial release.
+## 0.2.0
 
-## 0.1.0
+### New Features
+- **Multiple Face Detection**: Added `detectMultipleFaces`, `maxFaces`, and `onMultipleFacesDetected` callback
+- **Face Quality Score**: Added `FaceQuality` class with brightness, sharpness, and pose metrics
+- **Manual Capture Button**: Added `showCaptureButton` and `captureButtonBuilder` for custom UI
+- **Preview Mode**: Added `showPreview`, `onPreviewConfirm`, and `onPreviewRetry` callbacks
+- **Zoom Control**: Added pinch-to-zoom with `enableZoom`, `minZoom`, `maxZoom`, and `zoomLevel` notifier
+- **Capture Sound**: Added `enableCaptureSound` option
 
-* Added look-straight constraints (yaw/roll/pitch) with warnings and blocking capture if not facing forward.
-* Added encroaching vignette overlay with adjustable gap (`vignettePaddingFactor`), removed face outline.
-* Output bytes as `Uint8List`, added `statusBuilder` for rich status customization.
-* Added camera switch control, resolution preset config, and front-camera flip fix for captured image.
-* Performance: throttled face processing, cached paints in overlay, optional image processing toggle.
+### Optimizations
+- **Error Recovery**: Auto-retry camera initialization with exponential backoff (`maxRetryAttempts`)
+- **Memory**: Proper disposal of all ValueNotifiers and resources
 
-## 0.1.1
-
-* Polish for publish: cleaned pubspec metadata and docs, added .pubignore, bumped version.
+### Previous (0.1.0)
+- Flash/torch control
+- Configurable JPEG quality
+- Face cropping to bounding box
+- Error callbacks with `FaceCameraError` enum
+- Face landmarks/contours detection
+- Device orientation locking

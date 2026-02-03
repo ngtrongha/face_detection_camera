@@ -1,6 +1,6 @@
 # Face Detection Camera
 
-A smart Flutter camera package that detects faces, enforces “look straight” constraints, and automatically captures images. Uses Google ML Kit for face detection, supports custom overlay, rich status builder, and a controller for advanced workflows (like server verification loops).
+A smart Flutter camera package that detects faces, enforces "look straight" constraints, and automatically captures images. Uses Google ML Kit for face detection, supports custom overlay, rich status builder, and a controller for advanced workflows (like server verification loops).
 
 ## Features
 
@@ -11,6 +11,11 @@ A smart Flutter camera package that detects faces, enforces “look straight” 
 - 🎛 **Controller API**: Pause, resume, capture, switch camera, reset; tweak yaw/roll/pitch thresholds.
 - 🎨 **Customization**: `statusBuilder` (rich), `messageBuilder` (legacy), overlay coloring, vignette gap.
 - 🔄 **Continuous Workflow**: Capture -> process -> resume without closing the camera.
+- 🔦 **Flash Control**: Toggle flash/torch mode for low-light environments.
+- ✂️ **Face Cropping**: Optionally crop captured image to face bounding box.
+- 🎯 **Face Landmarks**: Enable contours and classification (smiling, eyes open) detection.
+- 📱 **Orientation Lock**: Automatic portrait orientation locking.
+- ⚠️ **Error Handling**: Comprehensive error callbacks for permission, initialization, and capture failures.
 
 ## Installation
 
@@ -137,6 +142,58 @@ class _MyCameraScreenState extends State<MyCameraScreen> {
 }
 ```
 
+### Error Handling
+
+```dart
+SmartFaceCamera(
+  onCapture: (bytes) { /* ... */ },
+  onError: (FaceCameraError error, String? message) {
+    switch (error) {
+      case FaceCameraError.permissionDenied:
+        print('Camera permission denied');
+        break;
+      case FaceCameraError.cameraInitFailed:
+        print('Failed to initialize camera: $message');
+        break;
+      case FaceCameraError.captureFailed:
+        print('Failed to capture image: $message');
+        break;
+      case FaceCameraError.noCamera:
+        print('No camera available');
+        break;
+      default:
+        print('Unknown error: $message');
+    }
+  },
+)
+```
+
+### Face Cropping
+
+```dart
+SmartFaceCamera(
+  cropToFace: true,          // Enable face cropping
+  faceCropPadding: 1.5,      // Padding around face (1.5 = 50% extra)
+  onCapture: (bytes) {
+    // bytes will be cropped to just the face area
+  },
+)
+```
+
+### Flash Control
+
+```dart
+SmartFaceCamera(
+  showFlashButton: true,           // Show flash toggle button
+  initialFlashMode: FlashMode.off, // Start with flash off
+  onCapture: (bytes) { /* ... */ },
+)
+
+// Or control programmatically:
+_controller.toggleFlash();
+_controller.setFlashMode(FlashMode.torch);
+```
+
 ## Configuration
 
 ### SmartFaceCamera
@@ -149,12 +206,24 @@ class _MyCameraScreenState extends State<MyCameraScreen> {
 | `captureCountdownDuration` | `int` | Stable duration before capture (ms). | `3000` |
 | `vignettePaddingFactor` | `double` | Gap from face to dark vignette (bigger = wider clear area). | `1.1` |
 | `showControls` | `bool` | Show switch camera button. | `false` |
+| `showFlashButton` | `bool` | Show flash toggle button. | `false` |
 | `messageBuilder` | `Widget? Function(BuildContext, FaceCameraState)` | Legacy message builder. | `null` |
-| `statusBuilder` | `Widget? Function(BuildContext, FaceCameraState, bool facingForward, int remainingSeconds)` | Rich builder with facing + countdown info. | `null` |
+| `statusBuilder` | `StatusMessageBuilder` | Rich builder with facing + countdown info. | `null` |
 | `resolutionPreset` | `ResolutionPreset` | Camera resolution. | `ResolutionPreset.high` |
 | `initialCameraLensDirection` | `CameraLensDirection` | Start camera (front/back). | `front` |
 | `imageFormat` | `CameraImageFormat` | `jpeg` / `png` output. | `jpeg` |
 | `enableImageProcessing` | `bool` | Rotate/encode vs raw bytes. | `true` |
+| `jpegQuality` | `int` | JPEG quality (1-100). | `90` |
+| `cropToFace` | `bool` | Crop captured image to face bounds. | `false` |
+| `faceCropPadding` | `double` | Padding around face when cropping. | `1.5` |
+| `enableContours` | `bool` | Enable face contours detection. | `false` |
+| `enableClassification` | `bool` | Enable smile/eyes classification. | `false` |
+| `initialFlashMode` | `FlashMode` | Initial flash mode. | `FlashMode.off` |
+| `lockOrientation` | `bool` | Lock to portrait orientation. | `true` |
+| `onError` | `FaceCameraErrorCallback?` | Error callback. | `null` |
+| `maxYawDegrees` | `double` | Max yaw for facing forward. | `12.0` |
+| `maxRollDegrees` | `double` | Max roll for facing forward. | `12.0` |
+| `maxPitchDegrees` | `double` | Max pitch for facing forward. | `12.0` |
 
 ### FaceCameraController
 
@@ -164,22 +233,35 @@ class _MyCameraScreenState extends State<MyCameraScreen> {
 | `pause()` / `resume()` | Pause/resume stability + countdown (preview still runs). |
 | `capture()` | Manual capture (resets countdown). |
 | `switchCamera()` | Toggle front/back. |
+| `toggleFlash()` | Toggle flash off/torch. |
+| `setFlashMode(FlashMode)` | Set specific flash mode. |
+| `reset()` | Reset to searching state. |
 | `dispose()` | Clean resources. |
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `maxYawDegrees` | `double` | Allowed yaw (turn left/right) to be “facing forward”. |
+| `state` | `FaceCameraState` | Current camera state. |
+| `maxYawDegrees` | `double` | Allowed yaw (turn left/right) to be "facing forward". |
 | `maxRollDegrees` | `double` | Allowed roll (tilt head). |
 | `maxPitchDegrees` | `double` | Allowed pitch (look up/down). |
 | `facingForward` | `ValueNotifier<bool>` | True when within yaw/roll/pitch limits. |
 | `remainingSeconds` | `ValueNotifier<int>` | Countdown seconds (stable phase). |
 | `detectedFace` | `ValueNotifier<Face?>` | Latest detected face (for custom overlays). |
+| `flashMode` | `ValueNotifier<FlashMode>` | Current flash mode. |
+| `capturedImage` | `Uint8List?` | Last captured image bytes. |
 
-## Publishing Checklist
+## Exported Types
 
-- [ ] Update version in `pubspec.yaml`.
-- [ ] Run `flutter pub get`.
-- [ ] Run static checks: `flutter analyze`.
-- [ ] Run tests: `flutter test`.
-- [ ] Update changelog (if any) with recent changes (Uint8List output, vignette padding, facing constraints, statusBuilder).
-- [ ] Verify Android/iOS permissions in example app (`CAMERA`, `RECORD_AUDIO`, Info.plist strings).
+The package exports the following types for customization:
+
+- `SmartFaceCamera` - Main camera widget
+- `FaceCameraController` - Controller for programmatic control
+- `FaceCameraState` - Enum of camera states
+- `FaceCameraError` - Enum of error types
+- `FaceOverlay` - Overlay widget for custom UI
+- `FacePainter` - CustomPainter for face vignette
+- `CameraImageFormat` - Image format enum (jpeg/png)
+- `Face` - ML Kit Face object
+- `FlashMode` - Camera flash modes
+- `ResolutionPreset` - Camera resolution presets
+- `CameraLensDirection` - Front/back camera

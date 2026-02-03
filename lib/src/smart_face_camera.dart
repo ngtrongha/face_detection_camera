@@ -16,6 +16,10 @@ typedef StatusMessageBuilder =
       int remainingSeconds,
     );
 
+/// Error callback type for face camera errors.
+typedef FaceCameraErrorCallback =
+    void Function(FaceCameraError error, String? message);
+
 class FaceCameraMessageStrings {
   final String? searching;
   final String? detected;
@@ -117,6 +121,69 @@ class SmartFaceCamera extends StatefulWidget {
   /// Higher value = bigger clear area around the face. Default: 1.1
   final double vignettePaddingFactor;
 
+  /// JPEG quality (1-100) when imageFormat is JPEG. Default: 90
+  final int jpegQuality;
+
+  /// Whether to crop the captured image to face bounding box.
+  final bool cropToFace;
+
+  /// Padding factor around face when cropping. Default: 1.5
+  final double faceCropPadding;
+
+  /// Enable face contours detection (more CPU intensive).
+  final bool enableContours;
+
+  /// Enable face classification (smiling, eyes open detection).
+  final bool enableClassification;
+
+  /// Initial flash mode. Default: FlashMode.off
+  final FlashMode initialFlashMode;
+
+  /// Whether to show flash toggle button.
+  final bool showFlashButton;
+
+  /// Error callback for handling camera errors.
+  final FaceCameraErrorCallback? onError;
+
+  /// Maximum yaw degrees for facing forward detection.
+  final double maxYawDegrees;
+
+  /// Maximum roll degrees for facing forward detection.
+  final double maxRollDegrees;
+
+  /// Maximum pitch degrees for facing forward detection.
+  final double maxPitchDegrees;
+
+  /// Whether to lock device orientation to portrait during camera use.
+  final bool lockOrientation;
+
+  /// Whether to show manual capture button.
+  final bool showCaptureButton;
+
+  /// Custom builder for capture button.
+  final Widget Function(VoidCallback onCapture)? captureButtonBuilder;
+
+  /// Whether to show preview of captured image before returning.
+  final bool showPreview;
+
+  /// Callback when preview is confirmed.
+  final Function(Uint8List image)? onPreviewConfirm;
+
+  /// Callback when preview is retried.
+  final VoidCallback? onPreviewRetry;
+
+  /// Whether to enable zoom gesture (pinch-to-zoom).
+  final bool enableZoom;
+
+  /// Multiple faces detection callback.
+  final void Function(List<dynamic> faces)? onMultipleFacesDetected;
+
+  /// Face quality callback.
+  final void Function(FaceQuality quality)? onFaceQuality;
+
+  /// Minimum quality score required for auto capture.
+  final double minQualityScore;
+
   const SmartFaceCamera({
     super.key,
     required this.onCapture,
@@ -133,6 +200,27 @@ class SmartFaceCamera extends StatefulWidget {
     this.enableImageProcessing = true,
     this.vignettePaddingFactor = 1.1,
     this.statusBuilder,
+    this.jpegQuality = 90,
+    this.cropToFace = false,
+    this.faceCropPadding = 1.5,
+    this.enableContours = false,
+    this.enableClassification = false,
+    this.initialFlashMode = FlashMode.off,
+    this.showFlashButton = false,
+    this.onError,
+    this.maxYawDegrees = 12.0,
+    this.maxRollDegrees = 12.0,
+    this.maxPitchDegrees = 12.0,
+    this.lockOrientation = true,
+    this.showCaptureButton = false,
+    this.captureButtonBuilder,
+    this.showPreview = false,
+    this.onPreviewConfirm,
+    this.onPreviewRetry,
+    this.enableZoom = false,
+    this.onMultipleFacesDetected,
+    this.onFaceQuality,
+    this.minQualityScore = 0.0,
   });
 
   @override
@@ -150,6 +238,7 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
     WidgetsBinding.instance.addObserver(this);
     if (widget.controller != null) {
       _controller = widget.controller!;
+      _controller.onError = widget.onError;
     } else {
       _controller = FaceCameraController(
         autoCapture: widget.autoCapture,
@@ -159,9 +248,24 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
         initialCameraLensDirection: widget.initialCameraLensDirection,
         imageFormat: widget.imageFormat,
         enableImageProcessing: widget.enableImageProcessing,
-        maxYawDegrees: widget.controller?.maxYawDegrees ?? 12.0,
-        maxRollDegrees: widget.controller?.maxRollDegrees ?? 12.0,
-        maxPitchDegrees: widget.controller?.maxPitchDegrees ?? 12.0,
+        maxYawDegrees: widget.maxYawDegrees,
+        maxRollDegrees: widget.maxRollDegrees,
+        maxPitchDegrees: widget.maxPitchDegrees,
+        jpegQuality: widget.jpegQuality,
+        cropToFace: widget.cropToFace,
+        faceCropPadding: widget.faceCropPadding,
+        enableContours: widget.enableContours,
+        enableClassification: widget.enableClassification,
+        initialFlashMode: widget.initialFlashMode,
+        lockOrientation: widget.lockOrientation,
+        enableZoom: widget.enableZoom,
+        detectMultipleFaces: widget.onMultipleFacesDetected != null,
+        onMultipleFacesDetected: widget.onMultipleFacesDetected != null
+            ? (faces) => widget.onMultipleFacesDetected!(faces)
+            : null,
+        onFaceQuality: widget.onFaceQuality,
+        minQualityScore: widget.minQualityScore,
+        onError: widget.onError,
       );
     }
     _initializeController();
@@ -220,16 +324,23 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
             return const Center(child: CircularProgressIndicator());
           }
 
-          // Handle Captured State
+          // Handle Captured State with preview option
           if (_controller.capturedImage == null) {
             _lastCapturedImage = null;
           } else if (_controller.state == FaceCameraState.captured &&
               _controller.capturedImage != null) {
             if (_controller.capturedImage != _lastCapturedImage) {
               _lastCapturedImage = _controller.capturedImage;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                widget.onCapture(_controller.capturedImage!);
-              });
+              if (widget.showPreview) {
+                // Show preview dialog, don't call onCapture yet
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  _showPreviewDialog(_controller.capturedImage!);
+                });
+              } else {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  widget.onCapture(_controller.capturedImage!);
+                });
+              }
             }
           }
 
@@ -240,75 +351,218 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
               _controller.cameraController!.value.aspectRatio;
           if (scale < 1) scale = 1 / scale;
 
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              // Camera Preview
-              Transform.scale(
-                scale: scale,
-                child: Center(
-                  child: CameraPreview(_controller.cameraController!),
-                ),
-              ),
-
-              // Face Overlay
-              ValueListenableBuilder(
-                valueListenable: _controller.detectedFace,
-                builder: (context, face, child) {
-                  // We pass the camera preview size to the overlay to map coordinates
-                  // Note: The input image size in controller might be different from preview size
-                  // But usually previewSize is what matters for mapping if we use that ratio.
-                  // Actually, ML Kit coordinates are based on the sensor image.
-                  // We can pass the preview size from controller.value.previewSize
-                  return FaceOverlay(
-                    face: face,
-                    imageSize: _controller.cameraController!.value.previewSize!,
-                    state: _controller.state,
-                    duration: widget.captureCountdownDuration,
-                    vignettePaddingFactor: widget.vignettePaddingFactor,
-                  );
-                },
-              ),
-
-              // Status Message (listen to facingForward as well)
-              ValueListenableBuilder<bool>(
-                valueListenable: _controller.facingForward,
-                builder: (context, isFacingForward, _) {
-                  return Positioned(
-                    top: 100,
-                    left: 20,
-                    right: 20,
-                    child: Center(child: _buildStatusMessage(isFacingForward)),
-                  );
-                },
-              ),
-
-              // Controls
-              Positioned(
-                top: 40,
-                right: 20,
-                child: GestureDetector(
-                  onTap: () {
-                    _controller.switchCamera();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: const BoxDecoration(
-                      color: Colors.black54,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.switch_camera,
-                      color: Colors.white,
-                      size: 30,
-                    ),
+          return GestureDetector(
+            // Pinch-to-zoom gesture
+            onScaleUpdate: widget.enableZoom
+                ? (details) {
+                    _controller.setZoomLevel(details.scale);
+                  }
+                : null,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Camera Preview
+                Transform.scale(
+                  scale: scale,
+                  child: Center(
+                    child: CameraPreview(_controller.cameraController!),
                   ),
                 ),
-              ),
-            ],
+
+                // Face Overlay
+                ValueListenableBuilder(
+                  valueListenable: _controller.detectedFace,
+                  builder: (context, face, child) {
+                    // We pass the camera preview size to the overlay to map coordinates
+                    // Note: The input image size in controller might be different from preview size
+                    // But usually previewSize is what matters for mapping if we use that ratio.
+                    // Actually, ML Kit coordinates are based on the sensor image.
+                    // We can pass the preview size from controller.value.previewSize
+                    return FaceOverlay(
+                      face: face,
+                      imageSize:
+                          _controller.cameraController!.value.previewSize!,
+                      state: _controller.state,
+                      duration: widget.captureCountdownDuration,
+                      vignettePaddingFactor: widget.vignettePaddingFactor,
+                    );
+                  },
+                ),
+
+                // Status Message (listen to facingForward as well)
+                ValueListenableBuilder<bool>(
+                  valueListenable: _controller.facingForward,
+                  builder: (context, isFacingForward, _) {
+                    return Positioned(
+                      top: 100,
+                      left: 20,
+                      right: 20,
+                      child: Center(
+                        child: _buildStatusMessage(isFacingForward),
+                      ),
+                    );
+                  },
+                ),
+
+                // Controls
+                Positioned(
+                  top: 40,
+                  right: 20,
+                  child: Column(
+                    children: [
+                      // Switch camera button
+                      if (widget.showControls)
+                        GestureDetector(
+                          onTap: () {
+                            _controller.switchCamera();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.switch_camera,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      // Flash toggle button
+                      if (widget.showFlashButton) ...[
+                        const SizedBox(height: 12),
+                        ValueListenableBuilder<FlashMode>(
+                          valueListenable: _controller.flashMode,
+                          builder: (context, mode, _) {
+                            return GestureDetector(
+                              onTap: () {
+                                _controller.toggleFlash();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  mode == FlashMode.off
+                                      ? Icons.flash_off
+                                      : Icons.flash_on,
+                                  color: mode == FlashMode.off
+                                      ? Colors.white
+                                      : Colors.yellow,
+                                  size: 30,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                // Capture Button
+                if (widget.showCaptureButton)
+                  Positioned(
+                    bottom: 40,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: widget.captureButtonBuilder != null
+                          ? widget.captureButtonBuilder!(
+                              () => _controller.capture(),
+                            )
+                          : GestureDetector(
+                              onTap: () => _controller.capture(),
+                              child: Container(
+                                width: 70,
+                                height: 70,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 4,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.3),
+                                      blurRadius: 10,
+                                      spreadRadius: 2,
+                                    ),
+                                  ],
+                                ),
+                                child: Container(
+                                  margin: const EdgeInsets.all(3),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
+              ],
+            ),
           );
         },
       ),
+    );
+  }
+
+  /// Shows preview dialog for captured image
+  void _showPreviewDialog(Uint8List imageBytes) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          contentPadding: EdgeInsets.zero,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
+                ),
+                child: Image.memory(
+                  imageBytes,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: 300,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(dialogContext);
+                        widget.onPreviewRetry?.call();
+                        _controller.reset();
+                      },
+                      child: const Text('Retry'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(dialogContext);
+                        widget.onPreviewConfirm?.call(imageBytes);
+                        widget.onCapture(imageBytes);
+                      },
+                      child: const Text('Confirm'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

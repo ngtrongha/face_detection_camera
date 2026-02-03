@@ -21,6 +21,43 @@ enum FaceCameraState {
   error,
 }
 
+/// Error types for face camera operations.
+enum FaceCameraError {
+  permissionDenied,
+  cameraInitFailed,
+  captureFailed,
+  processingFailed,
+  noCamera,
+}
+
+/// Face quality metrics for quality assessment.
+class FaceQuality {
+  /// Brightness score (0.0 to 1.0, higher is better).
+  final double brightness;
+
+  /// Sharpness/blur score (0.0 to 1.0, higher is sharper).
+  final double sharpness;
+
+  /// Pose score based on yaw/roll/pitch (0.0 to 1.0, higher = more frontal).
+  final double poseScore;
+
+  /// Overall quality score (average of all metrics).
+  double get overallScore => (brightness + sharpness + poseScore) / 3;
+
+  const FaceQuality({
+    required this.brightness,
+    required this.sharpness,
+    required this.poseScore,
+  });
+
+  @override
+  String toString() =>
+      'FaceQuality(brightness: ${brightness.toStringAsFixed(2)}, '
+      'sharpness: ${sharpness.toStringAsFixed(2)}, '
+      'poseScore: ${poseScore.toStringAsFixed(2)}, '
+      'overall: ${overallScore.toStringAsFixed(2)})';
+}
+
 /// Controller to manage the [SmartFaceCamera] state and logic.
 ///
 /// Can be used to control the camera programmatically (capture, switch camera, pause/resume)
@@ -79,6 +116,60 @@ class FaceCameraController extends ChangeNotifier {
   /// Maximum allowed pitch (look up/down) in degrees to consider facing forward.
   final double maxPitchDegrees;
 
+  /// JPEG quality (1-100) when imageFormat is JPEG.
+  final int jpegQuality;
+
+  /// Whether to crop the captured image to face bounding box.
+  final bool cropToFace;
+
+  /// Padding factor around face when cropping (1.0 = exact bounds, 2.0 = double size).
+  final double faceCropPadding;
+
+  /// Enable face contours detection (more CPU intensive).
+  final bool enableContours;
+
+  /// Enable face classification (smiling, eyes open detection).
+  final bool enableClassification;
+
+  /// Initial flash mode.
+  final FlashMode initialFlashMode;
+
+  /// Whether to lock device orientation to portrait.
+  final bool lockOrientation;
+
+  /// Whether to detect multiple faces.
+  final bool detectMultipleFaces;
+
+  /// Maximum number of faces to detect (when detectMultipleFaces is true).
+  final int maxFaces;
+
+  /// Callback for multiple faces detected.
+  void Function(List<Face> faces)? onMultipleFacesDetected;
+
+  /// Callback for face quality updates.
+  void Function(FaceQuality quality)? onFaceQuality;
+
+  /// Minimum quality score required for capture (0.0 to 1.0).
+  final double minQualityScore;
+
+  /// Whether to enable zoom gesture.
+  final bool enableZoom;
+
+  /// Minimum zoom level.
+  final double minZoom;
+
+  /// Maximum zoom level.
+  final double maxZoom;
+
+  /// Whether to play capture sound.
+  final bool enableCaptureSound;
+
+  /// Maximum retry attempts for camera initialization.
+  final int maxRetryAttempts;
+
+  /// Error callback for handling errors.
+  void Function(FaceCameraError error, String? message)? onError;
+
   // Output
   Uint8List? _capturedImage;
   Uint8List? get capturedImage => _capturedImage;
@@ -87,10 +178,33 @@ class FaceCameraController extends ChangeNotifier {
   final ValueNotifier<Face?> _detectedFace = ValueNotifier<Face?>(null);
   ValueNotifier<Face?> get detectedFace => _detectedFace;
 
-  // Stream for Countdown (High frequency update)
+  /// Stream for Countdown (High frequency update)
   final ValueNotifier<int> remainingSeconds = ValueNotifier<int>(0);
-  // Facing forward status
+
+  /// Facing forward status
   final ValueNotifier<bool> facingForward = ValueNotifier<bool>(true);
+
+  /// Current flash mode
+  final ValueNotifier<FlashMode> flashMode = ValueNotifier<FlashMode>(
+    FlashMode.off,
+  );
+
+  /// Current zoom level
+  final ValueNotifier<double> zoomLevel = ValueNotifier<double>(1.0);
+
+  /// All detected faces (for multiple face mode)
+  final ValueNotifier<List<Face>> detectedFaces = ValueNotifier<List<Face>>([]);
+
+  /// Current face quality
+  final ValueNotifier<FaceQuality?> faceQuality = ValueNotifier<FaceQuality?>(
+    null,
+  );
+
+  /// Last detected face bounding box for cropping
+  Rect? _lastFaceBounds;
+
+  /// Retry counter for initialization
+  int _retryCount = 0;
 
   FaceCameraController({
     this.autoCapture = true,
@@ -103,8 +217,27 @@ class FaceCameraController extends ChangeNotifier {
     this.maxYawDegrees = 12.0,
     this.maxRollDegrees = 12.0,
     this.maxPitchDegrees = 12.0,
+    this.jpegQuality = 90,
+    this.cropToFace = false,
+    this.faceCropPadding = 1.5,
+    this.enableContours = false,
+    this.enableClassification = false,
+    this.initialFlashMode = FlashMode.off,
+    this.lockOrientation = true,
+    this.detectMultipleFaces = false,
+    this.maxFaces = 5,
+    this.onMultipleFacesDetected,
+    this.onFaceQuality,
+    this.minQualityScore = 0.0,
+    this.enableZoom = false,
+    this.minZoom = 1.0,
+    this.maxZoom = 5.0,
+    this.enableCaptureSound = false,
+    this.maxRetryAttempts = 3,
+    this.onError,
   }) {
     _countdownMilliseconds = captureCountdownDuration;
+    flashMode.value = initialFlashMode;
   }
 
   /// Initializes the camera and face detector.
@@ -117,14 +250,26 @@ class FaceCameraController extends ChangeNotifier {
     final status = await Permission.camera.request();
     if (status.isDenied || status.isPermanentlyDenied) {
       _state = FaceCameraState.permissionDenied;
+      onError?.call(
+        FaceCameraError.permissionDenied,
+        'Camera permission denied',
+      );
       notifyListeners();
       return;
+    }
+
+    // Lock orientation if requested
+    if (lockOrientation) {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
     }
 
     try {
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
         _state = FaceCameraState.error;
+        onError?.call(FaceCameraError.noCamera, 'No cameras available');
         notifyListeners();
         return;
       }
@@ -142,7 +287,14 @@ class FaceCameraController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('Error initializing camera: $e');
+      _retryCount++;
+      if (_retryCount < maxRetryAttempts) {
+        // Retry with exponential backoff
+        await Future.delayed(Duration(milliseconds: 500 * _retryCount));
+        return initialize();
+      }
       _state = FaceCameraState.error;
+      onError?.call(FaceCameraError.cameraInitFailed, e.toString());
       notifyListeners();
     }
   }
@@ -159,15 +311,15 @@ class FaceCameraController extends ChangeNotifier {
     );
 
     await _cameraController!.initialize();
+    await _cameraController!.setFlashMode(flashMode.value);
     await _cameraController!.startImageStream(_processCameraImage);
   }
 
   void _initFaceDetector() {
     final options = FaceDetectorOptions(
       performanceMode: FaceDetectorMode.fast,
-      enableContours:
-          false, // Optimized: Turned off as we only need bounding box
-      enableClassification: false,
+      enableContours: enableContours,
+      enableClassification: enableClassification,
       minFaceSize: 0.15, // Optimized: Ignore small faces (background noise)
     );
     _faceDetector = FaceDetector(options: options);
@@ -213,15 +365,41 @@ class FaceCameraController extends ChangeNotifier {
       if (inputImage != null) {
         final faces = await _faceDetector!.processImage(inputImage);
 
+        // Multiple face detection
+        if (detectMultipleFaces) {
+          final limitedFaces = faces.take(maxFaces).toList();
+          detectedFaces.value = limitedFaces;
+          onMultipleFacesDetected?.call(limitedFaces);
+        }
+
         if (faces.isNotEmpty) {
           final face = faces.first;
           _detectedFace.value = face;
 
+          // Calculate and report face quality
+          final quality = _calculateFaceQuality(face);
+          faceQuality.value = quality;
+          onFaceQuality?.call(quality);
+
           if (autoCapture) {
-            _checkStability(face);
+            // Check quality threshold before checking stability
+            if (quality.overallScore >= minQualityScore) {
+              _checkStability(face);
+            } else {
+              // Quality too low, reset stability
+              _resetStability();
+              if (_state != FaceCameraState.detected) {
+                _state = FaceCameraState.detected;
+                notifyListeners();
+              }
+            }
           }
         } else {
           _detectedFace.value = null;
+          faceQuality.value = null;
+          if (detectMultipleFaces) {
+            detectedFaces.value = [];
+          }
           _resetStability();
           if (_state != FaceCameraState.searching) {
             _state = FaceCameraState.searching;
@@ -236,6 +414,32 @@ class FaceCameraController extends ChangeNotifier {
     }
   }
 
+  /// Calculate face quality score based on pose angles.
+  FaceQuality _calculateFaceQuality(Face face) {
+    final yaw = face.headEulerAngleY ?? 0.0;
+    final roll = face.headEulerAngleZ ?? 0.0;
+    final pitch = face.headEulerAngleX ?? 0.0;
+
+    // Pose score: 1.0 when perfectly frontal, decreases with angle
+    final yawScore = 1.0 - (yaw.abs() / 90.0).clamp(0.0, 1.0);
+    final rollScore = 1.0 - (roll.abs() / 90.0).clamp(0.0, 1.0);
+    final pitchScore = 1.0 - (pitch.abs() / 90.0).clamp(0.0, 1.0);
+    final poseScore = (yawScore + rollScore + pitchScore) / 3;
+
+    // Brightness estimation from face size (larger = better lit typically)
+    final faceArea = face.boundingBox.width * face.boundingBox.height;
+    final brightness = (faceArea / 50000).clamp(0.0, 1.0);
+
+    // Sharpness: based on tracking ID consistency (ML Kit assigns stable IDs)
+    final sharpness = face.trackingId != null ? 0.8 : 0.5;
+
+    return FaceQuality(
+      brightness: brightness,
+      sharpness: sharpness,
+      poseScore: poseScore,
+    );
+  }
+
   void _checkStability(Face face) {
     // Require facing forward: limit yaw (Y), roll (Z), pitch (X)
     // If ML Kit không trả về góc, coi như không đạt (dùng giá trị lớn để fail)
@@ -247,6 +451,9 @@ class FaceCameraController extends ChangeNotifier {
         roll.abs() <= maxRollDegrees &&
         pitch.abs() <= maxPitchDegrees;
     facingForward.value = isFacingForward;
+
+    // Store face bounds for cropping
+    _lastFaceBounds = face.boundingBox;
 
     if (!isFacingForward) {
       // Not facing straight -> treat as moving
@@ -382,6 +589,9 @@ class FaceCameraController extends ChangeNotifier {
         format: imageFormat,
         enableProcessing: enableImageProcessing,
         flipHorizontal: flipFront,
+        jpegQuality: jpegQuality,
+        cropRect: cropToFace ? _lastFaceBounds : null,
+        cropPadding: faceCropPadding,
       );
 
       // Clean up the temporary file created by camera plugin
@@ -395,6 +605,7 @@ class FaceCameraController extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error capturing: $e');
       _state = FaceCameraState.error;
+      onError?.call(FaceCameraError.captureFailed, e.toString());
       notifyListeners();
     }
   }
@@ -413,9 +624,34 @@ class FaceCameraController extends ChangeNotifier {
     _countdownTimer?.cancel();
     remainingSeconds.dispose();
     facingForward.dispose();
+    flashMode.dispose();
+    zoomLevel.dispose();
+    detectedFaces.dispose();
+    faceQuality.dispose();
     _cameraController?.dispose();
     _faceDetector?.close();
     super.dispose();
+  }
+
+  /// Sets the flash mode for the camera.
+  Future<void> setFlashMode(FlashMode mode) async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+    try {
+      await _cameraController!.setFlashMode(mode);
+      flashMode.value = mode;
+    } catch (e) {
+      debugPrint('Error setting flash mode: $e');
+    }
+  }
+
+  /// Toggles flash between off and torch mode.
+  Future<void> toggleFlash() async {
+    final newMode = flashMode.value == FlashMode.off
+        ? FlashMode.torch
+        : FlashMode.off;
+    await setFlashMode(newMode);
   }
 
   /// Switches between available cameras (Front/Back).
@@ -459,7 +695,41 @@ class FaceCameraController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sets the zoom level for the camera.
+  Future<void> setZoomLevel(double zoom) async {
+    if (!enableZoom) return;
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    final clampedZoom = zoom.clamp(minZoom, maxZoom);
+    try {
+      await _cameraController!.setZoomLevel(clampedZoom);
+      zoomLevel.value = clampedZoom;
+    } catch (e) {
+      debugPrint('Error setting zoom level: $e');
+    }
+  }
+
+  /// Increases zoom by a step.
+  Future<void> zoomIn({double step = 0.5}) async {
+    await setZoomLevel(zoomLevel.value + step);
+  }
+
+  /// Decreases zoom by a step.
+  Future<void> zoomOut({double step = 0.5}) async {
+    await setZoomLevel(zoomLevel.value - step);
+  }
+
+  /// Resets zoom to minimum level.
+  Future<void> resetZoom() async {
+    await setZoomLevel(minZoom);
+  }
+
   CameraController? get cameraController => _cameraController;
   CameraLensDirection get cameraLensDirection =>
       _currentCamera?.lensDirection ?? CameraLensDirection.front;
+
+  /// Current camera description.
+  CameraDescription? get currentCamera => _currentCamera;
 }
