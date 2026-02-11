@@ -4,12 +4,40 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import '../controllers/face_camera_controller.dart';
 import '../paints/face_painter.dart';
 
+/// An overlay widget that draws a face frame and applies a vignette effect.
+/// Một widget lớp phủ vẽ khung khuôn mặt và áp dụng hiệu ứng mờ viền.
 class FaceOverlay extends StatelessWidget {
+  /// The detected face to draw the frame around.
+  /// Khuôn mặt được phát hiện để vẽ khung xung quanh.
   final Face? face;
+
+  /// The original size of the camera image for coordinate mapping.
+  /// Kích thước gốc của hình ảnh camera để ánh xạ tọa độ.
   final Size imageSize;
+
+  /// The current state of the face camera.
+  /// Trạng thái hiện tại của camera khuôn mặt.
   final FaceCameraState state;
+
+  /// The duration of the countdown (used for animation synchronization).
+  /// Thời gian đếm ngược (được sử dụng để đồng bộ hóa hoạt ảnh).
   final int duration;
+
+  /// Padding multiplier for the vignette effect around the face.
+  /// Hệ số lề cho hiệu ứng mờ viền xung quanh khuôn mặt.
   final double vignettePaddingFactor;
+
+  /// Base color for the face frame.
+  /// Màu cơ bản cho khung khuôn mặt.
+  final Color baseColor;
+
+  /// Color for the face frame when a face is detected but not stable.
+  /// Màu cho khung khuôn mặt khi phát hiện khuôn mặt nhưng chưa ổn định.
+  final Color detectedColor;
+
+  /// Color for the face frame when the face is stable or capturing.
+  /// Màu cho khung khuôn mặt khi khuôn mặt ổn định hoặc đang chụp.
+  final Color stableColor;
 
   const FaceOverlay({
     super.key,
@@ -18,6 +46,9 @@ class FaceOverlay extends StatelessWidget {
     required this.state,
     this.duration = 3000,
     this.vignettePaddingFactor = 1.1,
+    this.baseColor = Colors.white54,
+    this.detectedColor = Colors.yellowAccent,
+    this.stableColor = Colors.greenAccent,
   });
 
   @override
@@ -25,23 +56,19 @@ class FaceOverlay extends StatelessWidget {
     Color color = Colors.white;
     switch (state) {
       case FaceCameraState.searching:
-        color = Colors.white54;
+        color = baseColor;
         break;
       case FaceCameraState.detected:
-        color = Colors.yellowAccent;
+        color = detectedColor;
         break;
       case FaceCameraState.stable:
       case FaceCameraState.capturing:
-        color = Colors.greenAccent;
+        color = stableColor;
         break;
       default:
         color = Colors.white;
     }
 
-    // Encroaching effect mapping:
-    // - searching: 0.0 (clear)
-    // - detected: 0.6 (viền đã tối khá rõ)
-    // - stable/capturing: 1.0 (tối sát khuôn mặt) trong thời gian countdown
     double targetProgress = 0.0;
     int animDuration = 400;
 
@@ -54,19 +81,17 @@ class FaceOverlay extends StatelessWidget {
     } else if (state == FaceCameraState.stable ||
         state == FaceCameraState.capturing) {
       targetProgress = 1.0;
-      animDuration = duration; // đồng bộ với thời gian chụp
+      animDuration = duration;
     }
 
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(
-        // We might want to start from previous value, but TweenAnimationBuilder handles implicit animations well
-        // if we change the target. However, going from 0.3 to 1.0 over 3 seconds is what we want.
         end: targetProgress,
       ),
       duration: Duration(milliseconds: animDuration),
       curve: state == FaceCameraState.stable
           ? Curves.linear
-          : Curves.easeOutCubic, // Linear for countdown sync
+          : Curves.easeOutCubic,
       builder: (context, progress, child) {
         return TweenAnimationBuilder<Color?>(
           tween: ColorTween(begin: Colors.white, end: color),

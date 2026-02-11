@@ -1,21 +1,23 @@
 # Face Detection Camera
 
-A smart Flutter camera package that detects faces, enforces "look straight" constraints, and automatically captures images. Uses Google ML Kit for face detection, supports custom overlay, rich status builder, and a controller for advanced workflows (like server verification loops).
+A smart Flutter camera package that detects faces, enforces "look straight" constraints, automatically captures images, and supports advanced **Liveness Detection** (anti-spoofing). Uses Google ML Kit for face detection, supports custom overlays, rich status builders, and a modular architecture for professional workflows.
 
 ## Features
 
-- 📸 **Face Detection**: Real-time using ML Kit.
+- 📸 **Face Detection**: Real-time using ML Kit with tracking support.
 - 🤳 **Auto Capture**: Captures when the face is stable for a configurable duration.
+- 🛡️ **Liveness Detection**: Anti-spoofing challenges (blink, smile, turn head, nod) with animated progress indicators.
 - 🧭 **Look-straight constraints**: Enforce yaw/roll/pitch thresholds; show warning when user not facing forward.
 - 🌘 **Encroaching vignette**: Dramatic darkening from edges toward the face; adjustable gap via `vignettePaddingFactor`.
-- 🎛 **Controller API**: Pause, resume, capture, switch camera, reset; tweak yaw/roll/pitch thresholds.
-- 🎨 **Customization**: `statusBuilder` (rich), `messageBuilder` (legacy), overlay coloring, vignette gap.
+- 🎛 **Modular Controller API**: Specialized services for Camera, Detection, Stability, and Liveness.
+- 🎨 **Deep Customization**: `statusBuilder`, `instructionBuilder`, `progressBuilder`, custom colors, icons, and magic numbers.
 - 🔄 **Continuous Workflow**: Capture -> process -> resume without closing the camera.
 - 🔦 **Flash Control**: Toggle flash/torch mode for low-light environments.
 - ✂️ **Face Cropping**: Optionally crop captured image to face bounding box.
 - 🎯 **Face Landmarks**: Enable contours and classification (smiling, eyes open) detection.
 - 📱 **Orientation Lock**: Automatic portrait orientation locking.
 - ⚠️ **Error Handling**: Comprehensive error callbacks for permission, initialization, and capture failures.
+- 🇻🇳 **Bilingual Support**: Full API documentation in both English and Vietnamese.
 
 ## Installation
 
@@ -53,146 +55,64 @@ Add the following keys to your `Info.plist`:
 
 ## Usage
 
-### Basic Usage (quick start)
+### 1. Basic Auto Capture
 
 ```dart
 import 'package:face_detection_camera/face_detection_camera.dart';
 
 SmartFaceCamera(
   autoCapture: true,
-  captureCountdownDuration: 3000, // ms stable before capture
-  vignettePaddingFactor: 1.1,     // gap from face to vignette
+  captureCountdownDuration: 3000,
   onCapture: (Uint8List imageBytes) {
-    // handle captured bytes (JPEG by default)
-  },
-  statusBuilder: (context, state, facingForward, remainingSeconds) {
-    if (!facingForward) return Text('Please look straight at the camera');
-    if (state == FaceCameraState.stable) {
-      return Text('Hold still... ($remainingSeconds)');
-    }
-    return null; // fallback to defaults
+    // Handle captured JPEG/PNG bytes
   },
 )
 ```
 
-### Advanced Usage: Server Processing Loop
-
-For use cases where you need to capture an image, pause camera logic, send to server, then resume:
-
-1. Create a `FaceCameraController`.
-2. Pass it to `SmartFaceCamera`.
-3. Use `pause()` and `resume()` in the `onCapture` callback.
+### 2. Liveness Detection (Banking-app Style)
 
 ```dart
-class MyCameraScreen extends StatefulWidget {
-  @override
-  _MyCameraScreenState createState() => _MyCameraScreenState();
-}
-
-class _MyCameraScreenState extends State<MyCameraScreen> {
-  late FaceCameraController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = FaceCameraController(
-      autoCapture: true,
-      captureCountdownDuration: 2000,
-      // tighten facing constraints if needed
-      maxYawDegrees: 10,
-      maxRollDegrees: 10,
-      maxPitchDegrees: 10,
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SmartFaceCamera(
-        controller: _controller,
-        onCapture: (Uint8List imageBytes) async {
-          // 1. Pause detection immediately so we don't capture again while processing
-          _controller.pause();
-
-          // 2. Show a loading dialog or process the image
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => const Center(child: CircularProgressIndicator()),
-          );
-
-          // 3. Simulate server upload
-          await Future.delayed(const Duration(seconds: 2));
-          
-          // Close dialog
-          Navigator.pop(context);
-
-          // 4. Resume detection for the next user/attempt
-          _controller.resume();
-        },
-      ),
-    );
-  }
-}
-```
-
-### Error Handling
-
-```dart
-SmartFaceCamera(
-  onCapture: (bytes) { /* ... */ },
-  onError: (FaceCameraError error, String? message) {
-    switch (error) {
-      case FaceCameraError.permissionDenied:
-        print('Camera permission denied');
-        break;
-      case FaceCameraError.cameraInitFailed:
-        print('Failed to initialize camera: $message');
-        break;
-      case FaceCameraError.captureFailed:
-        print('Failed to capture image: $message');
-        break;
-      case FaceCameraError.noCamera:
-        print('No camera available');
-        break;
-      default:
-        print('Unknown error: $message');
+LivenessCameraWidget(
+  challenges: [
+    LivenessChallengeConfig(
+      challenge: LivenessChallenge.blink,
+      instructionText: 'Please blink your eyes',
+    ),
+    LivenessChallengeConfig(
+      challenge: LivenessChallenge.turnLeft,
+      instructionText: 'Turn your head left',
+    ),
+  ],
+  onLivenessComplete: (LivenessResult result) {
+    if (result.passed) {
+       // result.capturedImage contains the final image
     }
   },
 )
 ```
 
-### Face Cropping
+### 3. Advanced Customization
+
+Every threshold and visual element is now customizable:
 
 ```dart
 SmartFaceCamera(
-  cropToFace: true,          // Enable face cropping
-  faceCropPadding: 1.5,      // Padding around face (1.5 = 50% extra)
-  onCapture: (bytes) {
-    // bytes will be cropped to just the face area
-  },
+  maxYawDegrees: 15.0,        // Max left/right turn
+  maxRollDegrees: 10.0,       // Max head tilt
+  minQualityScore: 0.7,       // Minimum image quality (0.0 - 1.0)
+  vignettePaddingFactor: 1.2, // Gap around the face
+  onCapture: (bytes) { ... },
 )
 ```
 
-### Flash Control
+## Modular Architecture
 
-```dart
-SmartFaceCamera(
-  showFlashButton: true,           // Show flash toggle button
-  initialFlashMode: FlashMode.off, // Start with flash off
-  onCapture: (bytes) { /* ... */ },
-)
+The package is now built with a service-based architecture for better stability and control:
 
-// Or control programmatically:
-_controller.toggleFlash();
-_controller.setFlashMode(FlashMode.torch);
-```
+- **`CameraService`**: Lifecycle, resolution, flash, and zoom.
+- **`FaceDetectionService`**: ML Kit integration and image stream processing.
+- **`StabilityTracker`**: Face stability and capture countdown logic.
+- **`LivenessController`**: Challenge sequencing and flow management.
 
 ## Configuration
 
@@ -200,68 +120,24 @@ _controller.setFlashMode(FlashMode.torch);
 
 | Parameter | Type | Description | Default |
 | --- | --- | --- | --- |
-| `onCapture` | `Function(Uint8List)` | Captured image bytes (JPEG/PNG). | Required |
-| `controller` | `FaceCameraController?` | External controller (pause/resume/capture/switch). | `null` |
+| `onCapture` | `Function(Uint8List)` | Captured image bytes. | Required |
 | `autoCapture` | `bool` | Auto capture when stable. | `true` |
-| `captureCountdownDuration` | `int` | Stable duration before capture (ms). | `3000` |
-| `vignettePaddingFactor` | `double` | Gap from face to dark vignette (bigger = wider clear area). | `1.1` |
-| `showControls` | `bool` | Show switch camera button. | `false` |
-| `showFlashButton` | `bool` | Show flash toggle button. | `false` |
-| `messageBuilder` | `Widget? Function(BuildContext, FaceCameraState)` | Legacy message builder. | `null` |
-| `statusBuilder` | `StatusMessageBuilder` | Rich builder with facing + countdown info. | `null` |
-| `resolutionPreset` | `ResolutionPreset` | Camera resolution. | `ResolutionPreset.high` |
-| `initialCameraLensDirection` | `CameraLensDirection` | Start camera (front/back). | `front` |
-| `imageFormat` | `CameraImageFormat` | `jpeg` / `png` output. | `jpeg` |
-| `enableImageProcessing` | `bool` | Rotate/encode vs raw bytes. | `true` |
-| `jpegQuality` | `int` | JPEG quality (1-100). | `90` |
-| `cropToFace` | `bool` | Crop captured image to face bounds. | `false` |
-| `faceCropPadding` | `double` | Padding around face when cropping. | `1.5` |
-| `enableContours` | `bool` | Enable face contours detection. | `false` |
-| `enableClassification` | `bool` | Enable smile/eyes classification. | `false` |
-| `initialFlashMode` | `FlashMode` | Initial flash mode. | `FlashMode.off` |
-| `lockOrientation` | `bool` | Lock to portrait orientation. | `true` |
-| `onError` | `FaceCameraErrorCallback?` | Error callback. | `null` |
-| `maxYawDegrees` | `double` | Max yaw for facing forward. | `12.0` |
-| `maxRollDegrees` | `double` | Max roll for facing forward. | `12.0` |
-| `maxPitchDegrees` | `double` | Max pitch for facing forward. | `12.0` |
+| `captureCountdownDuration` | `int` | Countdown duration (ms). | `3000` |
+| `maxYawDegrees` | `double` | Max yaw for frontal face. | `12.0` |
+| `minQualityScore` | `double` | Min quality for capture. | `0.0` |
+| `showControls` | `bool` | Show camera switch button. | `false` |
+| `cropToFace` | `bool` | Crop image to face bounds. | `false` |
 
-### FaceCameraController
+### LivenessCameraWidget
 
-| Method | Description |
-| --- | --- |
-| `initialize()` | Init camera and detector. |
-| `pause()` / `resume()` | Pause/resume stability + countdown (preview still runs). |
-| `capture()` | Manual capture (resets countdown). |
-| `switchCamera()` | Toggle front/back. |
-| `toggleFlash()` | Toggle flash off/torch. |
-| `setFlashMode(FlashMode)` | Set specific flash mode. |
-| `reset()` | Reset to searching state. |
-| `dispose()` | Clean resources. |
-
-| Property | Type | Description |
+| Parameter | Type | Description |
 | --- | --- | --- |
-| `state` | `FaceCameraState` | Current camera state. |
-| `maxYawDegrees` | `double` | Allowed yaw (turn left/right) to be "facing forward". |
-| `maxRollDegrees` | `double` | Allowed roll (tilt head). |
-| `maxPitchDegrees` | `double` | Allowed pitch (look up/down). |
-| `facingForward` | `ValueNotifier<bool>` | True when within yaw/roll/pitch limits. |
-| `remainingSeconds` | `ValueNotifier<int>` | Countdown seconds (stable phase). |
-| `detectedFace` | `ValueNotifier<Face?>` | Latest detected face (for custom overlays). |
-| `flashMode` | `ValueNotifier<FlashMode>` | Current flash mode. |
-| `capturedImage` | `Uint8List?` | Last captured image bytes. |
+| `challenges` | `List<LivenessChallengeConfig>` | List of actions to perform. |
+| `onLivenessComplete` | `Function(LivenessResult)` | Final result callback. |
+| `instructionBuilder` | `Widget Function(...)` | Custom instruction UI. |
+| `progressBuilder` | `Widget Function(BuildContext, LivenessProgressInfo)` | Custom progress UI; use `progress.overallProgress`, `progress.currentIndex`, etc. |
 
 ## Exported Types
 
-The package exports the following types for customization:
-
-- `SmartFaceCamera` - Main camera widget
-- `FaceCameraController` - Controller for programmatic control
-- `FaceCameraState` - Enum of camera states
-- `FaceCameraError` - Enum of error types
-- `FaceOverlay` - Overlay widget for custom UI
-- `FacePainter` - CustomPainter for face vignette
-- `CameraImageFormat` - Image format enum (jpeg/png)
-- `Face` - ML Kit Face object
-- `FlashMode` - Camera flash modes
-- `ResolutionPreset` - Camera resolution presets
-- `CameraLensDirection` - Front/back camera
+The package exports everything needed for deep integration:
+`SmartFaceCamera`, `LivenessCameraWidget`, `FaceCameraController`, `LivenessController`, `FaceCameraState`, `FaceCameraError`, `LivenessChallenge`, `LivenessChallengeConfig`, `LivenessResult`, `FaceQuality`, `Face`.

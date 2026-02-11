@@ -12,17 +12,44 @@ import '../services/face_detection_service.dart';
 import '../services/stability_tracker.dart';
 import '../utils/image_processing.dart';
 
+/// States of the face camera.
+/// Các trạng thái của camera khuôn mặt.
 enum FaceCameraState {
+  /// Initializing services.
+  /// Đang khởi tạo các dịch vụ.
   loading,
+
+  /// Camera permission was denied by the user.
+  /// Quyền truy cập camera bị người dùng từ chối.
   permissionDenied,
-  searching, // Camera running, no face detected
-  detected, // Face detected but moving/not stable
-  stable, // Face stable, countdown started
-  capturing, // Taking picture
-  captured, // Picture taken
+
+  /// Camera is running and searching for a face.
+  /// Camera đang chạy và tìm kiếm khuôn mặt.
+  searching,
+
+  /// A face is detected but is moving or not stable yet.
+  /// Đã phát hiện khuôn mặt nhưng đang di chuyển hoặc chưa ổn định.
+  detected,
+
+  /// Face is stable and the capture countdown has started.
+  /// Khuôn mặt ổn định và đếm ngược bắt đầu.
+  stable,
+
+  /// Currently taking a picture.
+  /// Đang chụp ảnh.
+  capturing,
+
+  /// Image has been captured successfully.
+  /// Ảnh đã được chụp thành công.
+  captured,
+
+  /// An error occurred during operation.
+  /// Có lỗi xảy ra trong quá trình vận hành.
   error,
 }
 
+/// Error types for face camera operations.
+/// Các loại lỗi cho các hoạt động của camera khuôn mặt.
 enum FaceCameraError {
   permissionDenied,
   cameraInitFailed,
@@ -31,11 +58,23 @@ enum FaceCameraError {
   noCamera,
 }
 
+/// Metrics for face quality assessment.
+/// Các chỉ số đánh giá chất lượng khuôn mặt.
 class FaceQuality {
+  /// Brightness score (0.0 to 1.0, higher is better).
+  /// Điểm độ sáng (0.0 đến 1.0, càng cao càng tốt).
   final double brightness;
+
+  /// Sharpness/blur score (0.0 to 1.0, higher is sharper).
+  /// Điểm độ sắc nét (0.0 đến 1.0, càng cao càng sắc nét).
   final double sharpness;
+
+  /// Pose score based on frontal alignment (0.0 to 1.0, higher = more frontal).
+  /// Điểm tư thế dựa trên căn chỉnh phía trước (0.0 đến 1.0, càng cao càng thẳng).
   final double poseScore;
 
+  /// Overall quality score (average of all metrics).
+  /// Điểm chất lượng tổng thể (trung bình của tất cả các chỉ số).
   double get overallScore => (brightness + sharpness + poseScore) / 3;
 
   const FaceQuality({
@@ -52,60 +91,168 @@ class FaceQuality {
       'overall: ${overallScore.toStringAsFixed(2)})';
 }
 
+/// Controller to manage the face detection camera state and logic.
+/// Bộ điều khiển để quản lý trạng thái và logic của camera phát hiện khuôn mặt.
 class FaceCameraController extends ChangeNotifier {
   final CameraService _cameraService = CameraService();
   late final FaceDetectionService _faceDetectionService;
   late final StabilityTracker _stabilityTracker;
 
   FaceCameraState _state = FaceCameraState.loading;
+
+  /// The current operational state of the camera.
+  /// Trạng thái hoạt động hiện tại của camera.
   FaceCameraState get state => _state;
 
   bool _isPaused = false;
 
   // Settings
+  /// Duration of the countdown before automatic capture (in ms).
+  /// Thời gian đếm ngược trước khi tự động chụp (tính bằng ms).
   final int captureCountdownDuration;
+
+  /// Whether to capture the image automatically when face is stable.
+  /// Có tự động chụp ảnh khi khuôn mặt ổn định hay không.
   final bool autoCapture;
+
+  /// Camera resolution quality preset.
+  /// Cài đặt chất lượng độ phân giải camera.
   final ResolutionPreset resolutionPreset;
+
+  /// Whether to enable audio recording (if needed for video).
+  /// Có bật ghi âm hay không.
   final bool enableAudio;
+
+  /// Initial camera lens direction (front/back).
+  /// Hướng ống kính camera ban đầu (trước/sau).
   final CameraLensDirection initialCameraLensDirection;
+
+  /// Format of the output image (JPEG/PNG).
+  /// Định dạng của ảnh đầu ra (JPEG/PNG).
   final CameraImageFormat imageFormat;
+
+  /// Whether to enable post-capture image processing (rotation, flipping).
+  /// Có bật xử lý ảnh sau khi chụp (xoay, lật) hay không.
   final bool enableImageProcessing;
+
+  /// Max yaw (left/right) degrees to consider face "straight".
+  /// Góc quay trái/phải tối đa để coi khuôn mặt là "thẳng".
   final double maxYawDegrees;
+
+  /// Max roll (tilt) degrees to consider face "straight".
+  /// Góc nghiêng tối đa để coi khuôn mặt là "thẳng".
   final double maxRollDegrees;
+
+  /// Max pitch (up/down) degrees to consider face "straight".
+  /// Góc ngẩng/cúi tối đa để coi khuôn mặt là "thẳng".
   final double maxPitchDegrees;
+
+  /// JPEG compression quality (1-100).
+  /// Chất lượng nén JPEG (1-100).
   final int jpegQuality;
+
+  /// Whether to crop the resulting image to the face bounding box.
+  /// Có cắt ảnh kết quả theo khung bao khuôn mặt hay không.
   final bool cropToFace;
+
+  /// Padding multiplier around the face when cropping.
+  /// Hệ số lề xung quanh khuôn mặt khi cắt.
   final double faceCropPadding;
+
+  /// Initial camera flash mode.
+  /// Chế độ đèn flash camera ban đầu.
   final FlashMode initialFlashMode;
+
+  /// Whether to lock the device orientation to portrait.
+  /// Có khóa hướng thiết bị theo chiều dọc hay không.
   final bool lockOrientation;
+
+  /// Whether to detect and report multiple faces.
+  /// Có phát hiện và báo cáo nhiều khuôn mặt hay không.
   final bool detectMultipleFaces;
+
+  /// Maximum number of faces to detect.
+  /// Số lượng khuôn mặt tối đa để phát hiện.
   final int maxFaces;
+
+  /// Minimum overall quality score required for auto capture.
+  /// Điểm chất lượng tổng thể tối thiểu cần thiết để tự động chụp.
   final double minQualityScore;
+
+  /// Whether to enable pinch-to-zoom gestures.
+  /// Có bật cử chỉ thu phóng hay không.
   final bool enableZoom;
+
+  /// Minimum zoom level allowed.
+  /// Mức thu phóng tối thiểu cho phép.
   final double minZoom;
+
+  /// Maximum zoom level allowed.
+  /// Mức thu phóng tối đa cho phép.
   final double maxZoom;
+
+  /// Maximum number of retry attempts for camera initialization.
+  /// Số lần thử lại tối đa để khởi tạo camera.
   final int maxRetryAttempts;
 
+  /// Whether to enable face contours detection.
+  /// Có bật phát hiện đường nét khuôn mặt hay không.
   final bool enableContours;
+
+  /// Whether to enable face classification (smile, eyes open).
+  /// Có bật phân loại khuôn mặt (cười, mở mắt) hay không.
   final bool enableClassification;
+
+  /// Whether to play a shutter sound on capture.
+  /// Có phát âm thanh màn trập khi chụp hay không.
   final bool enableCaptureSound;
 
+  /// Callback fired when multiple faces are detected.
+  /// Gọi lại khi phát hiện nhiều khuôn mặt.
   void Function(List<Face> faces)? onMultipleFacesDetected;
+
+  /// Callback fired with real-time face quality metrics.
+  /// Gọi lại với các chỉ số chất lượng khuôn mặt theo thời gian thực.
   void Function(FaceQuality quality)? onFaceQuality;
+
+  /// Callback for handling errors.
+  /// Gọi lại để xử lý lỗi.
   void Function(FaceCameraError error, String? message)? onError;
 
   Uint8List? _capturedImage;
+
+  /// The most recently captured image data.
+  /// Dữ liệu ảnh được chụp gần đây nhất.
   Uint8List? get capturedImage => _capturedImage;
 
   final ValueNotifier<Face?> _detectedFace = ValueNotifier<Face?>(null);
+
+  /// Notifier for the primary detected face (bounding box).
+  /// Thông báo cho khuôn mặt được phát hiện chính (khung bao).
   ValueNotifier<Face?> get detectedFace => _detectedFace;
 
+  /// Notifier for the remaining seconds in the capture countdown.
+  /// Thông báo số giây còn lại trong đếm ngược chụp ảnh.
   ValueNotifier<int> get remainingSeconds => _stabilityTracker.remainingSeconds;
 
+  /// Notifier for whether the face is currently aligned straight.
+  /// Thông báo liệu khuôn mặt hiện đang được căn chỉnh thẳng hay không.
   final ValueNotifier<bool> facingForward = ValueNotifier<bool>(true);
+
+  /// Notifier for the current camera flash mode.
+  /// Thông báo chế độ đèn flash camera hiện tại.
   final ValueNotifier<FlashMode> flashMode = ValueNotifier<FlashMode>(FlashMode.off);
+
+  /// Notifier for the current camera zoom level.
+  /// Thông báo mức thu phóng camera hiện tại.
   final ValueNotifier<double> zoomLevel = ValueNotifier<double>(1.0);
+
+  /// Notifier for the list of all currently detected faces.
+  /// Thông báo danh sách tất cả các khuôn mặt hiện đang được phát hiện.
   final ValueNotifier<List<Face>> detectedFaces = ValueNotifier<List<Face>>([]);
+
+  /// Notifier for the real-time quality metrics of the primary face.
+  /// Thông báo các chỉ số chất lượng theo thời gian thực của khuôn mặt chính.
   final ValueNotifier<FaceQuality?> faceQuality = ValueNotifier<FaceQuality?>(null);
 
   Rect? _lastFaceBounds;
@@ -157,6 +304,8 @@ class FaceCameraController extends ChangeNotifier {
     );
   }
 
+  /// Initializes the camera and face detection services.
+  /// Khởi tạo camera và các dịch vụ phát hiện khuôn mặt.
   Future<void> initialize() async {
     _state = FaceCameraState.loading;
     notifyListeners();
@@ -299,12 +448,6 @@ class FaceCameraController extends ChangeNotifier {
       return;
     }
 
-    if (_state != FaceCameraState.stable && _state != FaceCameraState.capturing) {
-      if (_state != FaceCameraState.stable) {
-         // This is a bit tricky with the new tracker, we need to know if it's about to start
-      }
-    }
-
     _stabilityTracker.checkStability(face);
 
     // Check if tracker started countdown
@@ -314,15 +457,21 @@ class FaceCameraController extends ChangeNotifier {
     }
   }
 
+  /// Pauses face detection and image processing.
+  /// Tạm dừng phát hiện khuôn mặt và xử lý hình ảnh.
   void pause() {
     _isPaused = true;
     _stabilityTracker.reset();
   }
 
+  /// Resumes face detection and image processing.
+  /// Tiếp tục phát hiện khuôn mặt và xử lý hình ảnh.
   void resume() {
     _isPaused = false;
   }
 
+  /// Triggers the image capture process manually.
+  /// Kích hoạt quá trình chụp ảnh thủ công.
   Future<void> capture() async {
     if (_state == FaceCameraState.capturing) return;
 
@@ -355,6 +504,8 @@ class FaceCameraController extends ChangeNotifier {
     }
   }
 
+  /// Resets the controller to searching state and clears captured image.
+  /// Đặt lại bộ điều khiển về trạng thái tìm kiếm và xóa ảnh đã chụp.
   void reset() {
     _capturedImage = null;
     _stabilityTracker.reset();
@@ -376,16 +527,22 @@ class FaceCameraController extends ChangeNotifier {
     super.dispose();
   }
 
+  /// Sets the flash mode of the camera lens.
+  /// Đặt chế độ đèn flash của ống kính camera.
   Future<void> setFlashMode(FlashMode mode) async {
     await _cameraService.setFlashMode(mode);
     flashMode.value = mode;
   }
 
+  /// Toggles between FlashMode.off and FlashMode.torch.
+  /// Chuyển đổi giữa FlashMode.off và FlashMode.torch.
   Future<void> toggleFlash() async {
     final newMode = flashMode.value == FlashMode.off ? FlashMode.torch : FlashMode.off;
     await setFlashMode(newMode);
   }
 
+  /// Switches between available camera lenses (e.g. Front to Back).
+  /// Chuyển đổi giữa các ống kính camera hiện có (ví dụ: Trước sang Sau).
   Future<void> switchCamera() async {
     await _cameraService.switchCamera(
       resolutionPreset: resolutionPreset,
@@ -399,6 +556,8 @@ class FaceCameraController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Programmatically sets the camera zoom level.
+  /// Đặt mức thu phóng camera theo chương trình.
   Future<void> setZoomLevel(double zoom) async {
     if (!enableZoom) return;
     final clampedZoom = zoom.clamp(minZoom, maxZoom);
@@ -406,7 +565,15 @@ class FaceCameraController extends ChangeNotifier {
     zoomLevel.value = clampedZoom;
   }
 
+  /// Underlying camera controller from the camera plugin.
+  /// Bộ điều khiển camera cơ sở từ plugin camera.
   CameraController? get cameraController => _cameraService.controller;
+
+  /// Current lens direction of the active camera.
+  /// Hướng ống kính hiện tại của camera đang hoạt động.
   CameraLensDirection get cameraLensDirection => _cameraService.currentCamera?.lensDirection ?? CameraLensDirection.front;
+
+  /// Metadata about the currently active camera.
+  /// Siêu dữ liệu về camera hiện đang hoạt động.
   CameraDescription? get currentCamera => _cameraService.currentCamera;
 }
