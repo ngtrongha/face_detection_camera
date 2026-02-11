@@ -5,8 +5,11 @@ import 'package:flutter/material.dart';
 
 import 'controllers/face_camera_controller.dart';
 import 'widgets/face_overlay.dart';
+import 'widgets/sub_widgets/camera_preview_widget.dart';
+import 'widgets/sub_widgets/camera_controls_widget.dart';
+import 'widgets/sub_widgets/capture_button_widget.dart';
 
-import 'utils/image_processing.dart'; // Import for CameraImageFormat
+import 'utils/image_processing.dart';
 
 typedef StatusMessageBuilder =
     Widget? Function(
@@ -16,7 +19,6 @@ typedef StatusMessageBuilder =
       int remainingSeconds,
     );
 
-/// Error callback type for face camera errors.
 typedef FaceCameraErrorCallback =
     void Function(FaceCameraError error, String? message);
 
@@ -38,150 +40,42 @@ class FaceCameraMessageStrings {
   });
 }
 
-/// A widget that integrates a camera with ML Kit face detection to capture
-/// profile pictures automatically.
-///
-/// Features:
-/// - Auto-detects face and starts a countdown.
-/// - Shows a visual overlay (face frame) that animates.
-/// - Captures image when the face is stable.
-/// - Returns the captured image as [Uint8List] for easy usage.
-///
-/// Usage:
-/// ```dart
-/// SmartFaceCamera(
-///   onCapture: (image) {
-///     // Handle the captured image (Uint8List)
-///   },
-///   messageStrings: FaceCameraMessageStrings(
-///     stable: 'Hold still for a moment...',
-///   ),
-/// )
-/// ```
 class SmartFaceCamera extends StatefulWidget {
-  /// Callback fired when an image is captured successfully.
-  ///
-  /// The returned [Uint8List] contains the bytes of the captured image
-  /// (encoded as JPEG or PNG based on [imageFormat]).
   final Function(Uint8List image) onCapture;
-
-  /// Optional builder to customize the status message widget.
   final Widget? Function(BuildContext context, FaceCameraState state)?
   messageBuilder;
-
-  /// Rich customization builder for status message, with extra context:
-  /// - [isFacingForward]: whether the user is looking straight
-  /// - [remainingSeconds]: countdown seconds (0 if not counting)
   final StatusMessageBuilder? statusBuilder;
-
-  /// Whether to automatically capture the image when a face is detected and stable.
-  /// Defaults to true.
   final bool autoCapture;
-
-  /// Duration of the countdown before capturing (in milliseconds).
-  /// Defaults to 3000ms (3 seconds).
   final int captureCountdownDuration;
-
-  /// Whether to show camera controls (switch camera button).
-  /// Defaults to false.
   final bool showControls;
-
-  /// Whether to enable audio for the camera.
-  /// Defaults to true.
   final bool enableAudio;
-
-  /// The resolution preset for the camera.
-  /// Defaults to [ResolutionPreset.high].
   final ResolutionPreset resolutionPreset;
-
-  /// The initial direction of the camera lens.
-  /// Defaults to [CameraLensDirection.front].
   final CameraLensDirection initialCameraLensDirection;
-
-  /// Custom strings for status messages.
   final FaceCameraMessageStrings? messageStrings;
-
-  /// Optional controller to manage camera state externally.
   final FaceCameraController? controller;
-
-  /// The format of the captured image.
-  /// Use [CameraImageFormat.jpeg] for smaller size (default).
-  /// Use [CameraImageFormat.png] for lossless quality but larger size.
   final CameraImageFormat imageFormat;
-
-  /// Whether to enable image processing (rotation, format conversion).
-  /// Defaults to true.
-  ///
-  /// Set to false to disable processing and return raw image bytes from the camera.
-  /// This significantly improves capture speed but might result in incorrect
-  /// image orientation on some devices.
   final bool enableImageProcessing;
-
-  /// Controls the gap between the face and the dark vignette (encroaching effect).
-  /// Higher value = bigger clear area around the face. Default: 1.1
   final double vignettePaddingFactor;
-
-  /// JPEG quality (1-100) when imageFormat is JPEG. Default: 90
   final int jpegQuality;
-
-  /// Whether to crop the captured image to face bounding box.
   final bool cropToFace;
-
-  /// Padding factor around face when cropping. Default: 1.5
   final double faceCropPadding;
-
-  /// Enable face contours detection (more CPU intensive).
   final bool enableContours;
-
-  /// Enable face classification (smiling, eyes open detection).
   final bool enableClassification;
-
-  /// Initial flash mode. Default: FlashMode.off
   final FlashMode initialFlashMode;
-
-  /// Whether to show flash toggle button.
   final bool showFlashButton;
-
-  /// Error callback for handling camera errors.
   final FaceCameraErrorCallback? onError;
-
-  /// Maximum yaw degrees for facing forward detection.
   final double maxYawDegrees;
-
-  /// Maximum roll degrees for facing forward detection.
   final double maxRollDegrees;
-
-  /// Maximum pitch degrees for facing forward detection.
   final double maxPitchDegrees;
-
-  /// Whether to lock device orientation to portrait during camera use.
   final bool lockOrientation;
-
-  /// Whether to show manual capture button.
   final bool showCaptureButton;
-
-  /// Custom builder for capture button.
   final Widget Function(VoidCallback onCapture)? captureButtonBuilder;
-
-  /// Whether to show preview of captured image before returning.
   final bool showPreview;
-
-  /// Callback when preview is confirmed.
   final Function(Uint8List image)? onPreviewConfirm;
-
-  /// Callback when preview is retried.
   final VoidCallback? onPreviewRetry;
-
-  /// Whether to enable zoom gesture (pinch-to-zoom).
   final bool enableZoom;
-
-  /// Multiple faces detection callback.
   final void Function(List<dynamic> faces)? onMultipleFacesDetected;
-
-  /// Face quality callback.
   final void Function(FaceQuality quality)? onFaceQuality;
-
-  /// Minimum quality score required for auto capture.
   final double minQualityScore;
 
   const SmartFaceCamera({
@@ -291,9 +185,16 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Handle camera lifecycle if needed (pause/resume)
-    // Ideally controller handles this, but camera plugin needs re-init on resume often.
-    // For simplicity, we skip deep lifecycle handling here, but in production it's needed.
+    if (_controller.cameraController == null ||
+        !_controller.cameraController!.value.isInitialized) {
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive) {
+      _controller.pause();
+    } else if (state == AppLifecycleState.resumed) {
+      _controller.resume();
+    }
   }
 
   @override
@@ -308,8 +209,7 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
           if (_controller.state == FaceCameraState.permissionDenied) {
             return Center(
               child: Text(
-                widget.messageStrings?.permissionDenied ??
-                    'Camera permission denied',
+                widget.messageStrings?.permissionDenied ?? 'Camera permission denied',
               ),
             );
           }
@@ -324,72 +224,33 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
             return const Center(child: CircularProgressIndicator());
           }
 
-          // Handle Captured State with preview option
-          if (_controller.capturedImage == null) {
-            _lastCapturedImage = null;
-          } else if (_controller.state == FaceCameraState.captured &&
-              _controller.capturedImage != null) {
-            if (_controller.capturedImage != _lastCapturedImage) {
-              _lastCapturedImage = _controller.capturedImage;
-              if (widget.showPreview) {
-                // Show preview dialog, don't call onCapture yet
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _showPreviewDialog(_controller.capturedImage!);
-                });
-              } else {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  widget.onCapture(_controller.capturedImage!);
-                });
-              }
-            }
-          }
+          _handleCaptureState();
 
           final size = MediaQuery.of(context).size;
-          // Calculate scale to cover screen
-          var scale =
-              size.aspectRatio *
-              _controller.cameraController!.value.aspectRatio;
+          var scale = size.aspectRatio * _controller.cameraController!.value.aspectRatio;
           if (scale < 1) scale = 1 / scale;
 
           return GestureDetector(
-            // Pinch-to-zoom gesture
-            onScaleUpdate: widget.enableZoom
-                ? (details) {
-                    _controller.setZoomLevel(details.scale);
-                  }
-                : null,
+            onScaleUpdate: widget.enableZoom ? (details) => _controller.setZoomLevel(details.scale) : null,
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // Camera Preview
-                Transform.scale(
+                CameraPreviewWidget(
+                  controller: _controller.cameraController!,
                   scale: scale,
-                  child: Center(
-                    child: CameraPreview(_controller.cameraController!),
-                  ),
                 ),
-
-                // Face Overlay
                 ValueListenableBuilder(
                   valueListenable: _controller.detectedFace,
                   builder: (context, face, child) {
-                    // We pass the camera preview size to the overlay to map coordinates
-                    // Note: The input image size in controller might be different from preview size
-                    // But usually previewSize is what matters for mapping if we use that ratio.
-                    // Actually, ML Kit coordinates are based on the sensor image.
-                    // We can pass the preview size from controller.value.previewSize
                     return FaceOverlay(
                       face: face,
-                      imageSize:
-                          _controller.cameraController!.value.previewSize!,
+                      imageSize: _controller.cameraController!.value.previewSize!,
                       state: _controller.state,
                       duration: widget.captureCountdownDuration,
                       vignettePaddingFactor: widget.vignettePaddingFactor,
                     );
                   },
                 ),
-
-                // Status Message (listen to facingForward as well)
                 ValueListenableBuilder<bool>(
                   valueListenable: _controller.facingForward,
                   builder: (context, isFacingForward, _) {
@@ -403,107 +264,22 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
                     );
                   },
                 ),
-
-                // Controls
-                Positioned(
-                  top: 40,
-                  right: 20,
-                  child: Column(
-                    children: [
-                      // Switch camera button
-                      if (widget.showControls)
-                        GestureDetector(
-                          onTap: () {
-                            _controller.switchCamera();
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: const BoxDecoration(
-                              color: Colors.black54,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.switch_camera,
-                              color: Colors.white,
-                              size: 30,
-                            ),
-                          ),
-                        ),
-                      // Flash toggle button
-                      if (widget.showFlashButton) ...[
-                        const SizedBox(height: 12),
-                        ValueListenableBuilder<FlashMode>(
-                          valueListenable: _controller.flashMode,
-                          builder: (context, mode, _) {
-                            return GestureDetector(
-                              onTap: () {
-                                _controller.toggleFlash();
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: const BoxDecoration(
-                                  color: Colors.black54,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  mode == FlashMode.off
-                                      ? Icons.flash_off
-                                      : Icons.flash_on,
-                                  color: mode == FlashMode.off
-                                      ? Colors.white
-                                      : Colors.yellow,
-                                  size: 30,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
+                ValueListenableBuilder<FlashMode>(
+                  valueListenable: _controller.flashMode,
+                  builder: (context, mode, _) {
+                    return CameraControlsWidget(
+                      showControls: widget.showControls,
+                      showFlashButton: widget.showFlashButton,
+                      flashMode: mode,
+                      onSwitchCamera: _controller.switchCamera,
+                      onToggleFlash: _controller.toggleFlash,
+                    );
+                  },
                 ),
-
-                // Capture Button
                 if (widget.showCaptureButton)
-                  Positioned(
-                    bottom: 40,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: widget.captureButtonBuilder != null
-                          ? widget.captureButtonBuilder!(
-                              () => _controller.capture(),
-                            )
-                          : GestureDetector(
-                              onTap: () => _controller.capture(),
-                              child: Container(
-                                width: 70,
-                                height: 70,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 4,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.3),
-                                      blurRadius: 10,
-                                      spreadRadius: 2,
-                                    ),
-                                  ],
-                                ),
-                                child: Container(
-                                  margin: const EdgeInsets.all(3),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
-                            ),
-                    ),
+                  CaptureButtonWidget(
+                    onTap: _controller.capture,
+                    builder: widget.captureButtonBuilder,
                   ),
               ],
             ),
@@ -513,7 +289,25 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
     );
   }
 
-  /// Shows preview dialog for captured image
+  void _handleCaptureState() {
+    if (_controller.capturedImage == null) {
+      _lastCapturedImage = null;
+    } else if (_controller.state == FaceCameraState.captured && _controller.capturedImage != null) {
+      if (_controller.capturedImage != _lastCapturedImage) {
+        _lastCapturedImage = _controller.capturedImage;
+        if (widget.showPreview) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showPreviewDialog(_controller.capturedImage!);
+          });
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.onCapture(_controller.capturedImage!);
+          });
+        }
+      }
+    }
+  }
+
   void _showPreviewDialog(Uint8List imageBytes) {
     showDialog(
       context: context,
@@ -525,9 +319,7 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
             mainAxisSize: MainAxisSize.min,
             children: [
               ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(12),
-                ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                 child: Image.memory(
                   imageBytes,
                   fit: BoxFit.cover,
@@ -569,18 +361,11 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
   Widget _buildStatusMessage(bool isFacingForward) {
     final int seconds = _controller.remainingSeconds.value;
 
-    // New rich builder takes priority
     if (widget.statusBuilder != null) {
-      final custom = widget.statusBuilder!(
-        context,
-        _controller.state,
-        isFacingForward,
-        seconds,
-      );
+      final custom = widget.statusBuilder!(context, _controller.state, isFacingForward, seconds);
       if (custom != null) return custom;
     }
 
-    // Legacy builder fallback (without facing info)
     if (widget.messageBuilder != null) {
       final customMessage = widget.messageBuilder!(context, _controller.state);
       if (customMessage != null) return customMessage;
@@ -589,11 +374,8 @@ class _SmartFaceCameraState extends State<SmartFaceCamera>
     String msg = '';
     Color color = Colors.white;
 
-    // Warning if not facing forward
     if (!isFacingForward) {
-      msg =
-          widget.messageStrings?.capturing ??
-          'Please look straight at the camera';
+      msg = widget.messageStrings?.capturing ?? 'Please look straight at the camera';
       color = Colors.redAccent;
       return _statusChip(msg, color);
     }
