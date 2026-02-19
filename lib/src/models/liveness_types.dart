@@ -13,8 +13,27 @@ enum LivenessState { idle, detecting, completed, failed }
 class LivenessChallengeConfig {
   final LivenessChallenge challenge;
 
-  /// Threshold for detection (e.g., 0.3 for blink).
-  final double threshold;
+  /// Threshold for detection.
+  /// - For blink/smile: probability threshold (0.0 to 1.0), default 0.5.
+  /// - For turn/nod: angle in degrees, default 20.0.
+  /// If null, a sensible default is chosen based on the challenge type.
+  final double? _threshold;
+
+  /// Returns the effective threshold, using a sensible default if not specified.
+  double get threshold => _threshold ?? _defaultThreshold;
+
+  double get _defaultThreshold {
+    switch (challenge) {
+      case LivenessChallenge.blink:
+      case LivenessChallenge.smile:
+        return 0.5; // probability
+      case LivenessChallenge.turnLeft:
+      case LivenessChallenge.turnRight:
+      case LivenessChallenge.nodUp:
+      case LivenessChallenge.nodDown:
+        return 20.0; // degrees
+    }
+  }
 
   /// Maximum time allowed to complete the challenge.
   final Duration timeout;
@@ -30,12 +49,12 @@ class LivenessChallengeConfig {
 
   const LivenessChallengeConfig({
     required this.challenge,
-    this.threshold = 0.5, // Default threshold
+    double? threshold,
     this.timeout = const Duration(seconds: 10),
     this.holdDuration = const Duration(milliseconds: 500),
     this.instructionText,
     this.successText,
-  });
+  }) : _threshold = threshold;
 }
 
 /// Progress info for custom progress indicator.
@@ -68,10 +87,15 @@ class LivenessChallengeResult {
   final LivenessChallengeState state;
   final Duration duration;
 
-  const LivenessChallengeResult({
+  /// The captured image at the moment this challenge completed (or failed).
+  /// Ảnh được chụp tại thời điểm challenge này hoàn thành (hoặc thất bại).
+  final Uint8List? capturedImage;
+
+  LivenessChallengeResult({
     required this.challenge,
     required this.state,
     required this.duration,
+    this.capturedImage,
   });
 }
 

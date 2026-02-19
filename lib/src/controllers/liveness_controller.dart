@@ -11,15 +11,29 @@ class LivenessController extends ChangeNotifier {
   /// Chuỗi các thử thách cần thực hiện.
   final List<LivenessChallengeConfig> challenges;
 
-  /// Whether to capture an image upon successful completion of all challenges.
-  /// Có chụp ảnh khi hoàn thành thành công tất cả các thử thách hay không.
+  /// Whether to capture an image upon completion of each challenge.
+  /// Có chụp ảnh khi hoàn thành mỗi thử thách hay không.
   final bool captureOnComplete;
+
+  /// Callback to capture an image from the camera.
+  /// Gọi lại để chụp ảnh từ camera.
+  final Future<Uint8List?> Function()? captureCallback;
+
+  /// Maximum number of tracking ID changes allowed before failing (anti-spoofing).
+  /// Số lần thay đổi tracking ID tối đa cho phép trước khi fail (chống giả mạo).
+  final int maxTrackingIdChanges;
+
+  /// Delay between challenges for UX transition.
+  /// Thời gian chờ giữa các thử thách để chuyển đổi UX.
+  final Duration challengeDelay;
 
   final LivenessService _livenessService = LivenessService();
 
   /// Notifier for the overall state of the liveness flow.
   /// Thông báo cho trạng thái tổng thể của luồng liveness.
-  final ValueNotifier<LivenessState> livenessState = ValueNotifier(LivenessState.idle);
+  final ValueNotifier<LivenessState> livenessState = ValueNotifier(
+    LivenessState.idle,
+  );
 
   /// Notifier for the index of the current active challenge.
   /// Thông báo cho chỉ số của thử thách hiện đang hoạt động.
@@ -27,7 +41,8 @@ class LivenessController extends ChangeNotifier {
 
   /// Notifier for the state of the current active challenge.
   /// Thông báo cho trạng thái của thử thách hiện đang hoạt động.
-  final ValueNotifier<LivenessChallengeState> currentChallengeState = ValueNotifier(LivenessChallengeState.pending);
+  final ValueNotifier<LivenessChallengeState> currentChallengeState =
+      ValueNotifier(LivenessChallengeState.pending);
 
   /// Notifier for the progress of the current challenge (0.0 to 1.0).
   /// Thông báo cho tiến trình của thử thách hiện tại (0.0 đến 1.0).
@@ -39,6 +54,8 @@ class LivenessController extends ChangeNotifier {
   Timer? _timeoutTimer;
   Timer? _holdTimer;
   int? _lastTrackingId;
+  int _trackingIdChangeCount = 0;
+  bool _isDisposed = false;
 
   /// Callback when a new challenge starts.
   /// Gọi lại khi một thử thách mới bắt đầu.
@@ -59,6 +76,9 @@ class LivenessController extends ChangeNotifier {
   LivenessController({
     required this.challenges,
     this.captureOnComplete = true,
+    this.captureCallback,
+    this.maxTrackingIdChanges = 3,
+    this.challengeDelay = const Duration(milliseconds: 500),
     this.onChallengeStart,
     this.onChallengeComplete,
     this.onChallengeFailed,
@@ -80,6 +100,8 @@ class LivenessController extends ChangeNotifier {
   }
 
   void _startChallenge(int index) {
+    if (_isDisposed) return;
+
     if (index >= challenges.length) {
       _completeFlow();
       return;
@@ -95,7 +117,9 @@ class LivenessController extends ChangeNotifier {
 
     _timeoutTimer?.cancel();
     _timeoutTimer = Timer(config.timeout, () {
-      _failChallenge(index, LivenessChallengeState.timeout);
+      if (!_isDisposed) {
+        _failChallenge(index, LivenessChallengeState.timeout);
+      }
     });
 
     notifyListeners();
@@ -104,13 +128,23 @@ class LivenessController extends ChangeNotifier {
   /// Processes a face frame from the camera stream to check challenge criteria.
   /// Xử lý một khung hình khuôn mặt từ luồng camera để kiểm tra các tiêu chí thử thách.
   void processFace(Face face) {
+    if (_isDisposed) return;
     if (livenessState.value != LivenessState.detecting) return;
     if (currentChallengeState.value != LivenessChallengeState.active) return;
 
-    // Anti-spoofing check
-    if (!_livenessService.verifyTrackingConsistency(face, _lastTrackingId)) {
-      _failChallenge(currentChallengeIndex.value, LivenessChallengeState.failed);
-      return;
+    // Anti-spoofing check: allow a limited number of tracking ID changes
+    // to tolerate momentary face loss and re-detection.
+    if (face.trackingId != null &&
+        _lastTrackingId != null &&
+        face.trackingId != _lastTrackingId) {
+      _trackingIdChangeCount++;
+      if (_trackingIdChangeCount > maxTrackingIdChanges) {
+        _failChallenge(
+          currentChallengeIndex.value,
+          LivenessChallengeState.failed,
+        );
+        return;
+      }
     }
     _lastTrackingId = face.trackingId;
 
@@ -124,6 +158,14 @@ class LivenessController extends ChangeNotifier {
     }
   }
 
+  /// Called when face is lost (no face detected).
+  /// Cancel hold timer to prevent challenge from passing without a face.
+  /// Gọi khi mất khuôn mặt (không phát hiện khuôn mặt).
+  /// Hủy hold timer để ngăn challenge tự pass khi không có mặt.
+  void onFaceLost() {
+    _handleChallengeUnmet();
+  }
+
   void _handleChallengeMet() {
     if (_holdTimer != null) return;
 
@@ -132,6 +174,11 @@ class LivenessController extends ChangeNotifier {
 
     DateTime holdStart = DateTime.now();
     _holdTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (_isDisposed) {
+        timer.cancel();
+        return;
+      }
+
       final elapsed = DateTime.now().difference(holdStart).inMilliseconds;
       challengeProgress.value = (elapsed / holdMs).clamp(0.0, 1.0);
 
@@ -151,40 +198,72 @@ class LivenessController extends ChangeNotifier {
     }
   }
 
-  void _successChallenge(int index) {
+  /// Captures an image for the current challenge result.
+  /// Returns null if capture is disabled or fails.
+  Future<Uint8List?> _captureForChallenge() async {
+    if (!captureOnComplete || captureCallback == null) return null;
+    try {
+      return await captureCallback!();
+    } catch (e) {
+      debugPrint('Error capturing image for challenge: $e');
+      return null;
+    }
+  }
+
+  Future<void> _successChallenge(int index) async {
     _timeoutTimer?.cancel();
 
     final config = challenges[index];
     final duration = DateTime.now().difference(_challengeStartTime!);
 
-    _results.add(LivenessChallengeResult(
-      challenge: config.challenge,
-      state: LivenessChallengeState.success,
-      duration: duration,
-    ));
+    // Capture image for this specific challenge
+    final Uint8List? challengeImage = await _captureForChallenge();
+    if (_isDisposed) return;
+
+    _results.add(
+      LivenessChallengeResult(
+        challenge: config.challenge,
+        state: LivenessChallengeState.success,
+        duration: duration,
+        capturedImage: challengeImage,
+      ),
+    );
 
     currentChallengeState.value = LivenessChallengeState.success;
     onChallengeComplete?.call(config, index);
     notifyListeners();
 
-    // Short delay before next challenge for UX
-    Future.delayed(const Duration(milliseconds: 500), () {
-      _startChallenge(index + 1);
+    // Configurable delay before next challenge for UX
+    // Guard against disposed state to prevent crash.
+    Future.delayed(challengeDelay, () {
+      if (!_isDisposed && livenessState.value == LivenessState.detecting) {
+        _startChallenge(index + 1);
+      }
     });
   }
 
-  void _failChallenge(int index, LivenessChallengeState reason) {
+  Future<void> _failChallenge(int index, LivenessChallengeState reason) async {
+    if (_isDisposed) return;
+
     _timeoutTimer?.cancel();
     _holdTimer?.cancel();
+    _holdTimer = null;
 
     final config = challenges[index];
     final duration = DateTime.now().difference(_challengeStartTime!);
 
-    _results.add(LivenessChallengeResult(
-      challenge: config.challenge,
-      state: reason,
-      duration: duration,
-    ));
+    // Capture image even on failure for audit/review
+    final Uint8List? challengeImage = await _captureForChallenge();
+    if (_isDisposed) return;
+
+    _results.add(
+      LivenessChallengeResult(
+        challenge: config.challenge,
+        state: reason,
+        duration: duration,
+        capturedImage: challengeImage,
+      ),
+    );
 
     currentChallengeState.value = reason;
     livenessState.value = LivenessState.failed;
@@ -193,14 +272,25 @@ class LivenessController extends ChangeNotifier {
     _completeFlow(passed: false);
   }
 
-  void _completeFlow({bool passed = true}) {
-    livenessState.value = passed ? LivenessState.completed : LivenessState.failed;
+  Future<void> _completeFlow({bool passed = true}) async {
+    if (_isDisposed) return;
+
+    livenessState.value = passed
+        ? LivenessState.completed
+        : LivenessState.failed;
+
+    // Use the last challenge's captured image as the overall result image.
+    // This avoids an extra capture call since we already captured per-challenge.
+    final Uint8List? lastCapturedImage = _results.isNotEmpty
+        ? _results.last.capturedImage
+        : null;
 
     final totalDuration = DateTime.now().difference(_flowStartTime!);
     final result = LivenessResult(
       passed: passed,
       challengeResults: List.from(_results),
       totalDuration: totalDuration,
+      capturedImage: lastCapturedImage,
     );
 
     onLivenessComplete?.call(result);
@@ -212,17 +302,20 @@ class LivenessController extends ChangeNotifier {
   void reset() {
     _timeoutTimer?.cancel();
     _holdTimer?.cancel();
+    _holdTimer = null;
     _results.clear();
     livenessState.value = LivenessState.idle;
     currentChallengeIndex.value = 0;
     currentChallengeState.value = LivenessChallengeState.pending;
     challengeProgress.value = 0.0;
     _lastTrackingId = null;
+    _trackingIdChangeCount = 0;
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _isDisposed = true;
     _timeoutTimer?.cancel();
     _holdTimer?.cancel();
     livenessState.dispose();

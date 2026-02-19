@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.1
+
+### New Features
+- **Per-challenge image capture**: Each `LivenessChallengeResult` now includes a `capturedImage` field, captured at the moment the challenge completes or fails.
+- **Configurable `challengeDelay`**: Delay between challenges is now customizable via `LivenessCameraWidget.challengeDelay` (default: 500ms).
+
+### Improvements
+- **Safer image processing**: `_processImageIsolate` now deletes the file **after** successful decode instead of before, preventing permanent image loss on decode failure.
+- `LivenessResult.capturedImage` is now set from the last challenge's image (no extra capture call).
+
+### Bug Fixes
+- **Liveness `capturedImage` always null**: `LivenessController._completeFlow()` now captures an image via `captureCallback` before creating `LivenessResult`, populated on both **pass** and **fail**.
+- **`autoStart = false` unusable**: Added a "Start" button UI when `autoStart` is `false`, and exposed `startLiveness()` method on `_LivenessCameraWidgetState`.
+- **Crash after dispose (async `_completeFlow`)**: Added `_isDisposed` guard throughout `LivenessController` to prevent accessing disposed ValueNotifiers after async operations.
+- **Crash from `Future.delayed` after pop**: `_successChallenge` now guards the 500ms delay with `_isDisposed` and state checks.
+- **`_holdTimer` passes challenge without face**: Added `onFaceLost()` method; `LivenessCameraWidget` calls it when face becomes `null`, cancelling the hold timer.
+- **Missing app lifecycle handling**: Added `WidgetsBindingObserver` to `LivenessCameraWidget` to pause camera & cancel timers on background.
+- **Anti-spoofing too strict**: Replaced instant-fail on tracking ID change with tolerant `maxTrackingIdChanges` (default: 3).
+- **Capture state collision**: `FaceCameraController.capture()` now uses a `Completer` so concurrent calls wait for the ongoing capture instead of returning silently.
+- **Wrong default threshold for turn/nod**: `LivenessChallengeConfig.threshold` now defaults to 20° for turn/nod challenges (was 0.5, which meant any tiny movement would pass).
+
 ## 0.3.0
 
 ### New Features

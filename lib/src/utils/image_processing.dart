@@ -58,15 +58,18 @@ Uint8List _processImageIsolate(ImageProcessingRequest request) {
   final file = File(request.filePath);
   final bytes = file.readAsBytesSync();
 
-  // Clean up original file immediately
-  file.deleteSync();
-
-  // Decode the image
+  // Decode the image first, before deleting the file
   final image = img.decodeImage(bytes);
 
   if (image == null) {
-    throw Exception('Unable to decode image');
+    // Keep original file for debugging if decode fails
+    throw Exception('Unable to decode image: ${request.filePath}');
   }
+
+  // Clean up original file only after successful decode
+  try {
+    file.deleteSync();
+  } catch (_) {}
 
   // Flip for front camera if requested
   img.Image processedImage = request.flipHorizontal

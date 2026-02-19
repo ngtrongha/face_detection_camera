@@ -241,7 +241,9 @@ class FaceCameraController extends ChangeNotifier {
 
   /// Notifier for the current camera flash mode.
   /// Thông báo chế độ đèn flash camera hiện tại.
-  final ValueNotifier<FlashMode> flashMode = ValueNotifier<FlashMode>(FlashMode.off);
+  final ValueNotifier<FlashMode> flashMode = ValueNotifier<FlashMode>(
+    FlashMode.off,
+  );
 
   /// Notifier for the current camera zoom level.
   /// Thông báo mức thu phóng camera hiện tại.
@@ -253,7 +255,9 @@ class FaceCameraController extends ChangeNotifier {
 
   /// Notifier for the real-time quality metrics of the primary face.
   /// Thông báo các chỉ số chất lượng theo thời gian thực của khuôn mặt chính.
-  final ValueNotifier<FaceQuality?> faceQuality = ValueNotifier<FaceQuality?>(null);
+  final ValueNotifier<FaceQuality?> faceQuality = ValueNotifier<FaceQuality?>(
+    null,
+  );
 
   Rect? _lastFaceBounds;
   int _retryCount = 0;
@@ -288,9 +292,9 @@ class FaceCameraController extends ChangeNotifier {
     this.maxRetryAttempts = 3,
     this.onError,
   }) : _faceDetectionService = FaceDetectionService(
-          enableContours: enableContours,
-          enableClassification: enableClassification,
-        ) {
+         enableContours: enableContours,
+         enableClassification: enableClassification,
+       ) {
     flashMode.value = initialFlashMode;
     _stabilityTracker = StabilityTracker(
       countdownDuration: captureCountdownDuration,
@@ -313,7 +317,10 @@ class FaceCameraController extends ChangeNotifier {
     final status = await Permission.camera.request();
     if (status.isDenied || status.isPermanentlyDenied) {
       _state = FaceCameraState.permissionDenied;
-      onError?.call(FaceCameraError.permissionDenied, 'Camera permission denied');
+      onError?.call(
+        FaceCameraError.permissionDenied,
+        'Camera permission denied',
+      );
       notifyListeners();
       return;
     }
@@ -351,7 +358,8 @@ class FaceCameraController extends ChangeNotifier {
     if (_isProcessing || _cameraService.controller == null || _isPaused) return;
 
     if (_lastProcessingTime != null &&
-        DateTime.now().difference(_lastProcessingTime!).inMilliseconds < _processIntervalMs) {
+        DateTime.now().difference(_lastProcessingTime!).inMilliseconds <
+            _processIntervalMs) {
       return;
     }
 
@@ -451,9 +459,10 @@ class FaceCameraController extends ChangeNotifier {
     _stabilityTracker.checkStability(face);
 
     // Check if tracker started countdown
-    if (_stabilityTracker.remainingSeconds.value > 0 && _state != FaceCameraState.stable) {
-       _state = FaceCameraState.stable;
-       notifyListeners();
+    if (_stabilityTracker.remainingSeconds.value > 0 &&
+        _state != FaceCameraState.stable) {
+      _state = FaceCameraState.stable;
+      notifyListeners();
     }
   }
 
@@ -471,17 +480,27 @@ class FaceCameraController extends ChangeNotifier {
   }
 
   /// Triggers the image capture process manually.
+  /// If a capture is already in progress, waits for it to finish.
   /// Kích hoạt quá trình chụp ảnh thủ công.
-  Future<void> capture() async {
-    if (_state == FaceCameraState.capturing) return;
+  /// Nếu đang chụp, đợi cho đến khi hoàn thành.
+  Completer<void>? _captureCompleter;
 
+  Future<void> capture() async {
+    // If already capturing, wait for the ongoing capture to finish.
+    if (_state == FaceCameraState.capturing && _captureCompleter != null) {
+      return _captureCompleter!.future;
+    }
+
+    _captureCompleter = Completer<void>();
     _stabilityTracker.reset();
     _state = FaceCameraState.capturing;
     notifyListeners();
 
     try {
       final XFile file = await _cameraService.takePicture();
-      final bool flipFront = _cameraService.currentCamera?.lensDirection == CameraLensDirection.front;
+      final bool flipFront =
+          _cameraService.currentCamera?.lensDirection ==
+          CameraLensDirection.front;
 
       final Uint8List processed = await processCapturedImage(
         File(file.path),
@@ -496,11 +515,15 @@ class FaceCameraController extends ChangeNotifier {
       _capturedImage = processed;
       _state = FaceCameraState.captured;
       notifyListeners();
+      _captureCompleter?.complete();
     } catch (e) {
       debugPrint('Error capturing: $e');
       _state = FaceCameraState.error;
       onError?.call(FaceCameraError.captureFailed, e.toString());
       notifyListeners();
+      _captureCompleter?.complete();
+    } finally {
+      _captureCompleter = null;
     }
   }
 
@@ -537,7 +560,9 @@ class FaceCameraController extends ChangeNotifier {
   /// Toggles between FlashMode.off and FlashMode.torch.
   /// Chuyển đổi giữa FlashMode.off và FlashMode.torch.
   Future<void> toggleFlash() async {
-    final newMode = flashMode.value == FlashMode.off ? FlashMode.torch : FlashMode.off;
+    final newMode = flashMode.value == FlashMode.off
+        ? FlashMode.torch
+        : FlashMode.off;
     await setFlashMode(newMode);
   }
 
@@ -571,7 +596,8 @@ class FaceCameraController extends ChangeNotifier {
 
   /// Current lens direction of the active camera.
   /// Hướng ống kính hiện tại của camera đang hoạt động.
-  CameraLensDirection get cameraLensDirection => _cameraService.currentCamera?.lensDirection ?? CameraLensDirection.front;
+  CameraLensDirection get cameraLensDirection =>
+      _cameraService.currentCamera?.lensDirection ?? CameraLensDirection.front;
 
   /// Metadata about the currently active camera.
   /// Siêu dữ liệu về camera hiện đang hoạt động.

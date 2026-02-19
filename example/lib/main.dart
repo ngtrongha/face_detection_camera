@@ -102,8 +102,26 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     ..._livenessResult!.challengeResults.map(
-                      (r) => Text(
-                        '- ${r.challenge.name}: ${r.state.name} (${r.duration.inMilliseconds}ms)',
+                      (r) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '- ${r.challenge.name}: ${r.state.name} (${r.duration.inMilliseconds}ms)',
+                          ),
+                          if (r.capturedImage != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4, bottom: 8),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.memory(
+                                  r.capturedImage!,
+                                  width: 100,
+                                  height: 100,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ],
@@ -198,8 +216,7 @@ class _HomeScreenState extends State<HomeScreen> {
           onLivenessComplete: (LivenessResult result) {
             setState(() {
               _livenessResult = result;
-              // If it passed, show the captured image if available
-              // (Future: LivenessController could trigger capture at the end)
+              _capturedImage = result.capturedImage;
             });
             Navigator.pop(context);
           },
